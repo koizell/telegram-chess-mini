@@ -1,0 +1,107 @@
+name: Notificar a Code2Vault
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      # Documentación y configs
+      - '**/*.md'
+      - '**/*.txt'
+      - '**/*.rst'
+      - '**/LICENSE'
+      - '**/.gitignore'
+      - '**/.gitattributes'
+      - '**/.editorconfig'
+      - '**/.prettierrc'
+      - '**/.eslintrc*'
+      - '**/package-lock.json'
+      - '**/yarn.lock'
+      - '**/pnpm-lock.yaml'
+      - '**/requirements*.txt'
+      - '**/Pipfile*'
+      - '**/poetry.lock'
+      - '**/pyproject.toml'
+      - '**/tsconfig*.json'
+      - '**/vite.config.*'
+      - '**/svelte.config.*'
+      - '**/next.config.*'
+      - '**/tailwind.config.*'
+      - '**/postcss.config.*'
+      # Carpetas ignoradas
+      - '**/node_modules/**'
+      - '**/.git/**'
+      - '**/.github/**'
+      - '**/dist/**'
+      - '**/build/**'
+      - '**/out/**'
+      - '**/coverage/**'
+      - '**/docs/**'
+      - '**/assets/**'
+      - '**/images/**'
+      - '**/img/**'
+      - '**/public/**'
+      - '**/static/**'
+      - '**/vendor/**'
+      - '**/.next/**'
+      - '**/.nuxt/**'
+      - '**/.svelte-kit/**'
+      - '**/.vscode/**'
+      - '**/.idea/**'
+      - '**/__pycache__/**'
+      - '**/.venv/**'
+      - '**/venv/**'
+      - '**/env/**'
+      - '**/.pytest_cache/**'
+      - '**/.mypy_cache/**'
+      - '**/migrations/**'
+      - '**/seeds/**'
+      - '**/fixtures/**'
+      # Binarios y recursos
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+      - '**/*.gif'
+      - '**/*.svg'
+      - '**/*.ico'
+      - '**/*.webp'
+      - '**/*.pdf'
+      - '**/*.zip'
+      - '**/*.tar'
+      - '**/*.gz'
+      - '**/*.mp4'
+      - '**/*.mp3'
+      - '**/*.wav'
+      - '**/*.woff'
+      - '**/*.woff2'
+      - '**/*.ttf'
+      - '**/*.eot'
+      - '**/*.otf'
+
+jobs:
+  notificar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔑 Generar token temporal de la GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: koizell-dev
+
+      - name: 📨 Enviar evento al repo privado
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: koizell-dev/code2vault-template
+          event-type: codigo-actualizado
+          client-payload: |
+            {
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}",
+              "before": "${{ github.event.before }}",
+              "after": "${{ github.event.after }}",
+              "repository": "${{ github.repository }}",
+              "commit_message": "${{ github.event.head_commit.message }}"
+            }
