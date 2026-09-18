@@ -96,4 +96,5 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           repository: koizell-dev/code2vault-template
           event-type: codigo-actualizado
-          client-payload: '{"ref":"${{ github.ref }}","sha":"${{ github.sha }}","before":"${{ github.event.before }}","after":"${{ github.event.after }}","repository":"${{ github.repository }}"}'
+          client-payload: >-
+            {"ref":${{ toJson(github.ref) }},"sha":${{ toJson(github.sha) }},"before":${{ toJson(github.event.before) }},"after":${{ toJson(github.event.after) }},"repository":${{ toJson(github.repository) }}}
