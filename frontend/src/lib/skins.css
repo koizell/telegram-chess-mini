@@ -1,0 +1,28 @@
+/* ============================================
+   SKINS DE PIEZAS
+   Las URLs se inyectan vía CSS custom properties
+   desde +page.svelte.
+   ============================================ */
+
+/* --- Piezas blancas --- */
+cg-board piece.pawn.white   { background-image: var(--wp) !important; }
+cg-board piece.knight.white { background-image: var(--wn) !important; }
+cg-board piece.bishop.white { background-image: var(--wb) !important; }
+cg-board piece.rook.white   { background-image: var(--wr) !important; }
+cg-board piece.queen.white  { background-image: var(--wq) !important; }
+cg-board piece.king.white   { background-image: var(--wk) !important; }
+
+/* --- Piezas negras --- */
+cg-board piece.pawn.black   { background-image: var(--bp) !important; }
+cg-board piece.knight.black { background-image: var(--bn) !important; }
+cg-board piece.bishop.black { background-image: var(--bb) !important; }
+cg-board piece.rook.black   { background-image: var(--br) !important; }
+cg-board piece.queen.black  { background-image: var(--bq) !important; }
+cg-board piece.king.black   { background-image: var(--bk) !important; }
+
+/* Tamaño uniforme de las piezas */
+cg-board piece {
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+}
