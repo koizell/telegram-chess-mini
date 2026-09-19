@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getRanking } from '$lib/api';
+  import { base } from '$app/paths';
 
   let ranking: any[] = [];
   let loading = true;
@@ -42,7 +43,7 @@
   {/if}
 
   <nav>
-    <a href="/">← Volver al tablero</a>
+     <a href="{base}/">← Volver al tablero</a>
   </nav>
 </main>
 

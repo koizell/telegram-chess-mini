@@ -202,8 +202,8 @@
   {/if}
 
   <nav>
-    <a href="/perfil">👤 Mi Perfil</a>
-    <a href="/ranking">🏆 Ranking</a>
+    <a href="{base}/perfil">👤 Mi Perfil</a>
+    <a href="{base}/ranking">🏆 Ranking</a>
   </nav>
 </main>
 

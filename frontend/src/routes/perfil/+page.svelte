@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import { tgUser, isTelegram } from '$lib/telegram';
   import { getUser } from '$lib/api';
 
@@ -63,8 +64,8 @@
   {/if}
 
   <nav>
-    <a href="/">← Volver al tablero</a>
-    <a href="/ranking">🏆 Ranking</a>
+    <a href="{base}/">← Volver al tablero</a>
+    <a href="{base}/ranking">🏆 Ranking</a>
   </nav>
 </main>
 
