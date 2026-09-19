@@ -1,15 +1,47 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { initTelegram, tgUser, isTelegram } from '$lib/telegram';
+  import { getUser } from '$lib/api';
+
+  let displayName = '';
 
   onMount(() => {
-    initTelegram();
+    setTimeout(async () => {
+      initTelegram();
+
+      // Cuando detectemos al usuario, buscar su display_name en PocketBase
+      const unsubscribe = tgUser.subscribe(async (user) => {
+        if (user) {
+          try {
+            const profile = await getUser(user.id);
+            if (profile?.display_name) {
+              displayName = profile.display_name;
+            } else if (user.first_name && user.first_name !== '...') {
+              displayName = user.first_name;
+            } else {
+              displayName = `Jugador${user.id}`;
+            }
+          } catch (e) {
+            // Si no tiene perfil en PocketBase, usar el nombre de Telegram
+            displayName = (user.first_name && user.first_name !== '...')
+              ? user.first_name
+              : `Jugador${user.id}`;
+          }
+        }
+      });
+
+      return () => unsubscribe();
+    }, 100);
   });
 </script>
 
 <header>
-  {#if $isTelegram && $tgUser}
-    <span class="user">👤 {$tgUser.first_name}</span>
+  {#if $isTelegram}
+    {#if displayName}
+      <span class="user">👤 {displayName}</span>
+    {:else}
+      <span class="user">👤 Cargando...</span>
+    {/if}
   {:else}
     <span class="user dev">🧪 Modo desarrollo</span>
   {/if}
