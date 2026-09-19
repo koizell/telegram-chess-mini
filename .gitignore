@@ -11,6 +11,11 @@ env/
 *.egg-info/
 dist/
 build/
+.env
+.env.local
+.env.*.local
+test_connection.py
+test_config.py
 
 # === Node.js / SvelteKit ===
 node_modules/
