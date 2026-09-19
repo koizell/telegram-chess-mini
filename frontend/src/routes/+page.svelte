@@ -8,6 +8,7 @@
   import 'chessground/assets/chessground.cburnett.css';
   import { THEMES, getTheme, type Theme } from '$lib/themes';
   import { SKINS, getSkin, type Skin } from '$lib/skins';
+  import { sounds } from '$lib/sounds';
   import '$lib/themes.css';
   import '$lib/skins.css';
 
@@ -19,11 +20,11 @@
   let currentSkin: Skin = SKINS[0];
   let showThemeSelector = false;
   let showSkinSelector = false;
+  let soundEnabled = true;
 
   const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
-  // Genera las variables CSS con las URLs de las piezas
   $: pieceStyles = currentSkin
     ? `
       --wp: url('${base}/pieces/${currentSkin.id}/wP.svg');
@@ -44,6 +45,8 @@
   onMount(() => {
     if (!boardElement) return;
 
+    soundEnabled = sounds.isEnabled();
+
     ground = Chessground(boardElement, {
       fen: game.fen(),
       orientation: 'white',
@@ -58,9 +61,14 @@
     ground.set({
       movable: {
         events: {
+          select: () => {
+            sounds.play('select');
+          },
           after: (orig, dest) => {
             const move = game.move({ from: orig, to: dest, promotion: 'q' });
             if (move) {
+              sounds.play(move.captured ? 'capture' : 'move');
+
               ground?.set({
                 fen: game.fen(),
                 turnColor: game.turn() === 'w' ? 'white' : 'black',
@@ -75,7 +83,6 @@
       }
     });
 
-    // Cargar preferencias guardadas
     if (typeof localStorage !== 'undefined') {
       const savedTheme = localStorage.getItem('chess_theme');
       if (savedTheme) currentTheme = getTheme(savedTheme);
@@ -108,6 +115,12 @@
       localStorage.setItem('chess_skin', skin.id);
     }
   }
+
+  function toggleSound() {
+    soundEnabled = !soundEnabled;
+    sounds.setEnabled(soundEnabled);
+    if (soundEnabled) sounds.play('select');
+  }
 </script>
 
 <main>
@@ -119,10 +132,7 @@
     </div>
 
     <div class="board-column">
-      <div
-        class="board-wrapper theme-{currentTheme.id}"
-        style={pieceStyles}
-      >
+      <div class="board-wrapper theme-{currentTheme.id}" style={pieceStyles}>
         <div bind:this={boardElement} class="chess-board"></div>
       </div>
 
@@ -140,6 +150,9 @@
     </button>
     <button class="selector-btn" on:click={() => { showSkinSelector = !showSkinSelector; showThemeSelector = false; }}>
       ♟️ <strong>{currentSkin.name}</strong>
+    </button>
+    <button class="selector-btn icon-only" on:click={toggleSound} title="Activar/desactivar sonido">
+      {soundEnabled ? '🔊' : '🔇'}
     </button>
   </div>
 
@@ -225,6 +238,7 @@
 
   .selector-bar {
     display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem;
+    flex-wrap: wrap;
   }
   .selector-btn {
     background: #2a2a2a; color: #fff; border: 1px solid #3a3a3a;
@@ -232,6 +246,7 @@
     cursor: pointer; font-family: inherit;
   }
   .selector-btn:hover { background: #3a3a3a; }
+  .selector-btn.icon-only { padding: 0.5rem 0.75rem; font-size: 1rem; }
 
   .selector-panel {
     margin-top: 1rem; padding: 1rem; background: #2a2a2a; border-radius: 12px;
