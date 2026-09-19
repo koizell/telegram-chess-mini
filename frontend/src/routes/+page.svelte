@@ -60,6 +60,9 @@
     <div bind:this={boardElement} class="chess-board"></div>
   </div>
   <p class="hint">Haz clic en una pieza blanca para moverla.</p>
+  <nav>
+    <a href="/ranking">🏆 Ver Ranking</a>
+  </nav>
 </main>
 
 <style>
@@ -94,5 +97,24 @@
     font-size: 0.875rem;
     opacity: 0.6;
     margin-top: 1rem;
+  }
+
+  nav {
+    margin-top: 1.5rem;
+    text-align: center;
+  }
+
+  nav a {
+    color: #4ade80;
+    text-decoration: none;
+    font-size: 0.875rem;
+    padding: 0.5rem 1rem;
+    background: #2a2a2a;
+    border-radius: 8px;
+    display: inline-block;
+  }
+
+  nav a:hover {
+    background: #3a3a3a;
   }
 </style>
