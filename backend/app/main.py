@@ -4,6 +4,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from app.config import TELEGRAM_TOKEN
 from app.db.client import pb
+from app.modules.game.engine import ChessGame
+from app.modules.game.renderer import render_board
 
 # ============================================
 # CONFIGURACIÓN DE LOGGING
@@ -216,6 +218,196 @@ async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Error: {e}")
 
 
+
+# ============================================
+# ESTADO TEMPORAL DE PARTIDAS (en memoria)
+# ============================================
+# Estructura: {user_id: {"game": ChessGame, "difficulty": "medium"}}
+active_games = {}
+
+
+# ============================================
+# COMANDO /jugar_bot
+# ============================================
+async def jugar_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
+    # Verificar que el usuario esté registrado
+    pb_user = pb.get_user_by_telegram_id(user.id)
+    if not pb_user:
+        await update.message.reply_text("❌ Usa /start primero para crear tu perfil.")
+        return
+
+    # Dificultad por defecto
+    difficulty = "medium"
+    if context.args:
+        difficulty = context.args[0].lower()
+        if difficulty not in ("easy", "medium", "hard", "expert"):
+            await update.message.reply_text(
+                "❌ Dificultad inválida.\n\n"
+                "Opciones: `easy`, `medium`, `hard`, `expert`\n"
+                "Ejemplo: `/jugar_bot hard`",
+                parse_mode="Markdown"
+            )
+            return
+
+    # Si ya hay una partida activa, cerrarla
+    if user.id in active_games:
+        active_games[user.id]["game"].close()
+
+    # Crear nueva partida
+    game = ChessGame()
+    active_games[user.id] = {"game": game, "difficulty": difficulty}
+
+    nombre = pb_user.get("display_name") or user.first_name or "Jugador"
+    
+    emojis_dificultad = {
+        "easy": "🟢 Fácil",
+        "medium": "🟡 Medio",
+        "hard": "🔴 Difícil",
+        "expert": "⚫ Experto",
+    }
+
+    mensaje = (
+        f"♟️ *Nueva partida vs Stockfish*\n\n"
+        f"Dificultad: {emojis_dificultad[difficulty]}\n"
+        f"Juegas con: ⚪ Blancas\n\n"
+        f"{render_board(game.board)}\n\n"
+        f"*Tu turno.* Envía el movimiento así:\n"
+        f"`/mover e2 e4`"
+    )
+    
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+
+
+# ============================================
+# COMANDO /mover
+# ============================================
+async def mover(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    # Verificar que haya una partida activa
+    if user.id not in active_games:
+        await update.message.reply_text("❌ No tienes una partida activa. Usa /jugar_bot para empezar.")
+        return
+
+    # Verificar argumentos
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "❌ Formato incorrecto.\n\n"
+            "Uso: `/mover e2 e4`\n"
+            "Para promocionar: `/mover e7 e8 q`",
+            parse_mode="Markdown"
+        )
+        return
+
+    from_sq = context.args[0].lower()
+    to_sq = context.args[1].lower()
+    promotion = context.args[2].lower() if len(context.args) > 2 else None
+
+    game = active_games[user.id]["game"]
+    difficulty = active_games[user.id]["difficulty"]
+
+    # Verificar que no se haya terminado
+    if game.is_game_over:
+        await update.message.reply_text("⚠️ La partida ya terminó. Usa /jugar_bot para empezar otra.")
+        return
+
+    # Aplicar movimiento del jugador
+    if not game.make_move(from_sq, to_sq, promotion):
+        legal = game.get_legal_moves_from(from_sq)
+        if legal:
+            await update.message.reply_text(
+                f"❌ Movimiento inválido.\n\n"
+                f"Desde `{from_sq}` puedes mover a: `{', '.join(legal)}`",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ No hay piezas tuyas en `{from_sq}` o el movimiento no es válido.",
+                parse_mode="Markdown"
+            )
+        return
+
+    # Verificar si el jugador ganó con su movimiento
+    status = game.get_status_message()
+    if game.is_game_over:
+        result = game.get_result()
+        await _finalizar_partida(update, user, game, result, status)
+        return
+
+    # Turno de Stockfish
+    await update.message.reply_text("🤔 Pensando...")
+    
+    move = game.get_stockfish_move(difficulty)
+    if move is None:
+        await update.message.reply_text("⚠️ Stockfish no pudo calcular un movimiento. Partida cancelada.")
+        active_games[user.id]["game"].close()
+        del active_games[user.id]
+        return
+
+    # Verificar si Stockfish ganó
+    status = game.get_status_message()
+    if game.is_game_over:
+        result = game.get_result()
+        await _finalizar_partida(update, user, game, result, status)
+        return
+
+    # Mostrar tablero tras ambos movimientos
+    mensaje = (
+        f"♟️ *Tu turno*\n\n"
+        f"{render_board(game.board)}"
+    )
+    if status:
+        mensaje += f"\n\n{status}"
+
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+
+
+# ============================================
+# COMANDO /rendirse
+# ============================================
+async def rendirse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    if user.id not in active_games:
+        await update.message.reply_text("❌ No tienes una partida activa.")
+        return
+
+    game = active_games[user.id]["game"]
+    game.close()
+    del active_games[user.id]
+
+    await update.message.reply_text("🏳️ Te has rendido. Partida terminada.")
+
+
+# ============================================
+# FUNCIÓN AUXILIAR: Finalizar partida
+# ============================================
+async def _finalizar_partida(update, user, game, result, status_msg):
+    """Cierra la partida y muestra el resultado."""
+    active_games[user.id]["game"].close()
+    
+    if result == "white_wins":
+        emoji = "🏆"
+        texto = "¡VICTORIA! Ganaste a Stockfish."
+    elif result == "black_wins":
+        emoji = "♟️"
+        texto = "Derrota. Stockfish te ha ganado."
+    else:
+        emoji = "🤝"
+        texto = "Tablas."
+
+    mensaje = (
+        f"{emoji} *{texto}*\n\n"
+        f"{status_msg or ''}\n\n"
+        f"{render_board(game.board)}"
+    )
+
+    del active_games[user.id]
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+
+
 # ============================================
 # PUNTO DE ENTRADA
 # ============================================
@@ -239,6 +431,9 @@ def main():
     app.add_handler(CommandHandler("perfil", perfil))
     app.add_handler(CommandHandler("nombre", nombre))
     app.add_handler(CommandHandler("debug", debug))
+    app.add_handler(CommandHandler("jugar_bot", jugar_bot))
+    app.add_handler(CommandHandler("mover", mover))
+    app.add_handler(CommandHandler("rendirse", rendirse))
 
     logger.info("✅ Bot corriendo. Presiona Ctrl+C para detenerlo.")
     app.run_polling()
