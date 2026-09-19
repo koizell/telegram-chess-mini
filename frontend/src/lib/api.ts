@@ -6,7 +6,7 @@
 // En producción: URL completa de tu API (túnel Cloudflare)
 const API_URL = import.meta.env.DEV
   ? ''
-  : 'https://TU_DOMINIO_CLOUDFLARE.pages.dev'; // ← lo cambiaremos al desplegar
+  : 'https://monte-should-impose-array.trycloudflare.com'; // ← lo cambiaremos al desplegar
 
 /**
  * Health check de la API.
