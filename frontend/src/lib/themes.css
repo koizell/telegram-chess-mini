@@ -1,0 +1,66 @@
+/* ============================================
+   TEMAS DE TABLERO
+   ============================================ */
+
+/* Ocultar las coordenadas internas de Chessground */
+cg-board coords {
+  display: none;
+}
+
+/* --- Clásico --- */
+.board-wrapper.theme-clasico cg-board {
+  background: repeating-conic-gradient(#f0d9b5 0% 25%, #b58863 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* --- Nocturno --- */
+.board-wrapper.theme-nocturno cg-board {
+  background: repeating-conic-gradient(#b8c4cc 0% 25%, #5a6b78 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* --- Bosque --- */
+.board-wrapper.theme-bosque cg-board {
+  background: repeating-conic-gradient(#e8e0c8 0% 25%, #6b8e4e 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* --- Océano --- */
+.board-wrapper.theme-oceano cg-board {
+  background: repeating-conic-gradient(#c8e0ec 0% 25%, #4a7ba6 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* --- Neón --- */
+.board-wrapper.theme-neon cg-board {
+  background: repeating-conic-gradient(#c8b0e8 0% 25%, #7a5ab8 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* --- Papel --- */
+.board-wrapper.theme-papel cg-board {
+  background: repeating-conic-gradient(#f5f0e6 0% 25%, #c9b99a 0% 50%);
+  background-size: 25% 25%;
+}
+
+/* ============================================
+   PUNTOS DE MOVIMIENTO LEGAL
+   ============================================ */
+.theme-clasico cg-board square.move-dest {
+  background: radial-gradient(rgba(20, 85, 30, 0.5) 19%, rgba(0, 0, 0, 0) 20%);
+}
+.theme-nocturno cg-board square.move-dest {
+  background: radial-gradient(rgba(255, 200, 60, 0.7) 19%, rgba(0, 0, 0, 0) 20%);
+}
+.theme-bosque cg-board square.move-dest {
+  background: radial-gradient(rgba(255, 215, 0, 0.6) 19%, rgba(0, 0, 0, 0) 20%);
+}
+.theme-oceano cg-board square.move-dest {
+  background: radial-gradient(rgba(0, 212, 255, 0.6) 19%, rgba(0, 0, 0, 0) 20%);
+}
+.theme-neon cg-board square.move-dest {
+  background: radial-gradient(rgba(0, 255, 255, 0.8) 19%, rgba(0, 0, 0, 0) 20%);
+}
+.theme-papel cg-board square.move-dest {
+  background: radial-gradient(rgba(168, 198, 108, 0.6) 19%, rgba(0, 0, 0, 0) 20%);
+}
