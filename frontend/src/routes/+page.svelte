@@ -61,7 +61,8 @@
   </div>
   <p class="hint">Haz clic en una pieza blanca para moverla.</p>
   <nav>
-    <a href="/ranking">🏆 Ver Ranking</a>
+    <a href="/perfil">👤 Mi Perfil</a>
+    <a href="/ranking">🏆 Ranking</a>
   </nav>
 </main>
 
@@ -101,7 +102,10 @@
 
   nav {
     margin-top: 1.5rem;
-    text-align: center;
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
 
   nav a {
