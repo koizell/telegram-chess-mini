@@ -73,20 +73,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # COMANDO /help
 # ============================================
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "♟️ *Comandos disponibles:*\n\n"
-        "/start - Mensaje de bienvenida\n"
-        "/help - Ver esta ayuda\n"
-        "/ping - Probar que el bot responde\n"
-        "/perfil - Ver tu perfil\n"
-        "/historial - Ver tu historial de partidas\n"
-        "/nombre - Cambiar tu nombre (cada 7 días)\n"
-        "/jugar_bot - Partida vs Stockfish (texto)\n"
-        "/mover - Hacer un movimiento\n"
-        "/rendirse - Abandonar partida\n"
-        "/debug - Ver tus datos crudos",
-        parse_mode="Markdown"
-    )
+    logger.info(f"📖 Usuario {update.effective_user.id} ejecutó /help")
+    try:
+        await update.message.reply_text(
+            "♟️ *Comandos disponibles:*\n\n"
+            "/start - Mensaje de bienvenida\n"
+            "/help - Ver esta ayuda\n"
+            "/ping - Probar que el bot responde\n"
+            "/perfil - Ver tu perfil\n"
+            "/historial - Ver tu historial de partidas\n"
+            "/nombre - Cambiar tu nombre (cada 7 dias)\n"
+            "/jugar_bot - Partida vs Stockfish (texto)\n"
+            "/mover - Hacer un movimiento\n"
+            "/rendirse - Abandonar partida\n"
+            "/debug - Ver tus datos crudos",
+            parse_mode="Markdown"
+        )
+        logger.info("✅ /help enviado correctamente")
+    except Exception as e:
+        logger.error(f"❌ Error en /help: {e}")
 
 
 # ============================================
