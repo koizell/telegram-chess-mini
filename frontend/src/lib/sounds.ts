@@ -1,6 +1,7 @@
 /**
  * Gestor de sonidos de la Mini App.
- * Precarga los audios para reproducción instantánea.
+ * - move/capture/select: archivos MP3 (Lichess)
+ * - victory/defeat/draw: generados con Web Audio API (sin archivos)
  */
 import { base } from '$app/paths';
 
@@ -8,6 +9,7 @@ class SoundManager {
   private sounds: Record<string, HTMLAudioElement> = {};
   private enabled: boolean = true;
   private volume: number = 0.5;
+  private audioContext: AudioContext | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -23,7 +25,6 @@ class SoundManager {
       select: new Audio(`${base}/sounds/select.mp3`)
     };
 
-    // Establecer volumen
     Object.values(this.sounds).forEach((audio) => {
       audio.volume = this.volume;
       audio.preload = 'auto';
@@ -40,21 +41,88 @@ class SoundManager {
     }
   }
 
-  play(name: 'move' | 'capture' | 'select') {
-    if (!this.enabled) return;
+  private getAudioContext(): AudioContext {
+    if (!this.audioContext) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      this.audioContext = new AudioCtx();
+    }
+    return this.audioContext;
+  }
 
-    const sound = this.sounds[name];
-    if (!sound) return;
-
-    // Reiniciar el audio si ya está sonando (para movimientos rápidos)
+  /**
+   * Reproduce una melodía de notas con Web Audio API.
+   * @param notes Array de { freq, duration, delay } en Hz y segundos.
+   */
+  private playMelody(notes: { freq: number; duration: number; delay: number }[]) {
     try {
-      sound.currentTime = 0;
-      sound.play().catch((err) => {
-        // Los navegadores pueden bloquear el audio hasta la primera interacción
-        console.debug('Audio bloqueado o error:', err.message);
+      const ctx = this.getAudioContext();
+      const now = ctx.currentTime;
+
+      notes.forEach((note) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.value = note.freq;
+
+        const startTime = now + note.delay;
+        const endTime = startTime + note.duration;
+
+        // Envolvente de volumen (ataque y caída suaves)
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(this.volume, startTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, endTime);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(startTime);
+        osc.stop(endTime);
       });
     } catch (e) {
-      console.debug('Error reproduciendo sonido:', e);
+      console.debug('Error generando melodía:', e);
+    }
+  }
+
+  play(name: 'move' | 'capture' | 'select' | 'victory' | 'defeat' | 'draw') {
+    if (!this.enabled) return;
+
+    // Sonidos de archivo
+    if (name === 'move' || name === 'capture' || name === 'select') {
+      const sound = this.sounds[name];
+      if (!sound) return;
+      try {
+        sound.currentTime = 0;
+        sound.play().catch((err) => console.debug('Audio bloqueado:', err.message));
+      } catch (e) {
+        console.debug('Error reproduciendo:', e);
+      }
+      return;
+    }
+
+    // Sonidos generados con Web Audio API
+    if (name === 'victory') {
+      // Fanfarria alegre: Do - Mi - Sol - Do (arriba)
+      this.playMelody([
+        { freq: 523.25, duration: 0.15, delay: 0 },     // C5
+        { freq: 659.25, duration: 0.15, delay: 0.15 },  // E5
+        { freq: 783.99, duration: 0.15, delay: 0.30 },  // G5
+        { freq: 1046.50, duration: 0.4, delay: 0.45 }   // C6
+      ]);
+    } else if (name === 'defeat') {
+      // Melodía triste descendente: Sol - Mi - Do - La (abajo)
+      this.playMelody([
+        { freq: 392.00, duration: 0.20, delay: 0 },     // G4
+        { freq: 349.23, duration: 0.20, delay: 0.20 },  // F4
+        { freq: 293.66, duration: 0.20, delay: 0.40 },  // D4
+        { freq: 220.00, duration: 0.5, delay: 0.60 }    // A3
+      ]);
+    } else if (name === 'draw') {
+      // Dos notas neutras iguales
+      this.playMelody([
+        { freq: 440.00, duration: 0.20, delay: 0 },     // A4
+        { freq: 440.00, duration: 0.20, delay: 0.25 }   // A4
+      ]);
     }
   }
 

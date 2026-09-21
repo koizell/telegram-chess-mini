@@ -230,14 +230,26 @@
     }
   }
 
-  async function saveGameResult() {
+    async function saveGameResult() {
     if (!aiGameId || gameSaved) return;
     gameSaved = true;
+
+    // Reproducir sonido según el resultado
+    if (game.isCheckmate()) {
+      if (game.turn() === 'b') {
+        // El jugador ganó (Stockfish quedó en jaque mate)
+        sounds.play('victory');
+      } else {
+        // El jugador perdió
+        sounds.play('defeat');
+      }
+    } else if (game.isDraw()) {
+      sounds.play('draw');
+    }
 
     try {
       let result: string;
       if (game.isCheckmate()) {
-        // El ganador es el jugador que acaba de mover
         result = game.turn() === 'b' ? 'white_wins' : 'black_wins';
       } else {
         result = 'draw';
