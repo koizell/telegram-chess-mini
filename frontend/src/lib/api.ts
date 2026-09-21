@@ -65,3 +65,83 @@ export async function getHistory(telegramId: number, limit: number = 20) {
   if (!res.ok) throw new Error('Error obteniendo historial');
   return res.json();
 }
+
+
+// ============================================
+// MATCHMAKING (PvP)
+// ============================================
+export async function joinMatchmaking(telegramId: number) {
+  const res = await fetch(`${API_URL}/api/matchmaking/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telegram_id: telegramId })
+  });
+  if (!res.ok) throw new Error('Error entrando a la cola');
+  return res.json();
+}
+
+export async function getMatchmakingStatus(telegramId: number) {
+  const res = await fetch(`${API_URL}/api/matchmaking/status/${telegramId}`);
+  if (!res.ok) throw new Error('Error consultando estado');
+  return res.json();
+}
+
+export async function cancelMatchmaking(telegramId: number) {
+  const res = await fetch(`${API_URL}/api/matchmaking/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telegram_id: telegramId })
+  });
+  if (!res.ok) throw new Error('Error cancelando búsqueda');
+  return res.json();
+}
+
+// ============================================
+// PARTIDAS PvP
+// ============================================
+export async function getGame(gameId: string) {
+  const res = await fetch(`${API_URL}/api/games/${gameId}`);
+  if (!res.ok) throw new Error('Error cargando partida');
+  return res.json();
+}
+
+export async function makePvpMove(
+  gameId: string,
+  telegramId: number,
+  fromSquare: string,
+  toSquare: string,
+  promotion?: string
+) {
+  const res = await fetch(`${API_URL}/api/games/${gameId}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      telegram_id: telegramId,
+      from_square: fromSquare,
+      to_square: toSquare,
+      promotion: promotion || null
+    })
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Error aplicando movimiento');
+  }
+  return res.json();
+}
+
+export async function finishPvpGame(gameId: string, payload: {
+  result: string;
+  fen: string;
+  pgn: string;
+  winner_id?: string | null;
+  game_type?: string;
+}) {
+  const res = await fetch(`${API_URL}/api/games/${gameId}/finish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_type: 'pvp', ...payload })
+  });
+  if (!res.ok) throw new Error('Error finalizando partida');
+  return res.json();
+}

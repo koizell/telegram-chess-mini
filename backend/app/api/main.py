@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.client import pb
-from app.api.routes import users, ranking, games
+from app.api.routes import users, ranking, games, matchmaking
 
 # ============================================
 # CONFIGURACIÓN DE LOGGING
@@ -102,3 +102,4 @@ async def pocketbase_status():
 app.include_router(users.router)
 app.include_router(ranking.router)
 app.include_router(games.router)
+app.include_router(matchmaking.router)

@@ -476,6 +476,7 @@
   {/if}
 
   <nav>
+    <a href="{base}/pvp" class="pvp-link">👥 Jugar PvP</a>
     <a href="{base}/perfil">👤 Mi Perfil</a>
     <a href="{base}/ranking">🏆 Ranking</a>
     <a href="{base}/historial">📜 Historial</a>
@@ -708,4 +709,14 @@
   .modal-btn:hover { background: #3a3a3a; }
   .modal-btn.primary { background: #1f6f3f; border-color: #4ade80; }
   .modal-btn.primary:hover { background: #2a8f4f; }
+
+  nav a.pvp-link {
+    background: #1f6f3f;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  nav a.pvp-link:hover { background: #2a8f4f; }
+
+
 </style>
