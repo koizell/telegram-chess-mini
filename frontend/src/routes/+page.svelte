@@ -478,6 +478,7 @@
   <nav>
     <a href="{base}/perfil">👤 Mi Perfil</a>
     <a href="{base}/ranking">🏆 Ranking</a>
+    <a href="{base}/historial">📜 Historial</a>
   </nav>
 </main>
 

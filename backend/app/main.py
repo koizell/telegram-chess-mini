@@ -79,9 +79,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Ver esta ayuda\n"
         "/ping - Probar que el bot responde\n"
         "/perfil - Ver tu perfil\n"
+        "/historial - Ver tu historial de partidas\n"
         "/nombre - Cambiar tu nombre (cada 7 días)\n"
-        "/debug - Ver tus datos crudos (diagnóstico)\n\n"
-        "_Pronto habrá más comandos para jugar._",
+        "/jugar_bot - Partida vs Stockfish (texto)\n"
+        "/mover - Hacer un movimiento\n"
+        "/rendirse - Abandonar partida\n"
+        "/debug - Ver tus datos crudos",
         parse_mode="Markdown"
     )
 
@@ -409,6 +412,32 @@ async def _finalizar_partida(update, user, game, result, status_msg):
 
 
 # ============================================
+# COMANDO /historial
+# ============================================
+async def historial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Abre la Mini App en la página de historial."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    # URL de la Mini App (producción en GitHub Pages)
+    mini_app_url = "https://koizell.github.io/telegram-chess-mini/historial"
+
+    keyboard = [
+        [InlineKeyboardButton(
+            "📜 Abrir Historial",
+            web_app=WebAppInfo(url=mini_app_url)
+        )]
+    ]
+
+    await update.message.reply_text(
+        "📜 *Mi Historial*\n\n"
+        "Consulta todas tus partidas jugadas: victorias, derrotas y tablas.\n\n"
+        "Toca el botón para abrir tu historial.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+
+# ============================================
 # PUNTO DE ENTRADA
 # ============================================
 def main():
@@ -434,6 +463,7 @@ def main():
     app.add_handler(CommandHandler("jugar_bot", jugar_bot))
     app.add_handler(CommandHandler("mover", mover))
     app.add_handler(CommandHandler("rendirse", rendirse))
+    app.add_handler(CommandHandler("historial", historial))
 
     logger.info("✅ Bot corriendo. Presiona Ctrl+C para detenerlo.")
     app.run_polling()
