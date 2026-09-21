@@ -9,6 +9,8 @@
   import { THEMES, getTheme, type Theme } from '$lib/themes';
   import { SKINS, getSkin, type Skin } from '$lib/skins';
   import { sounds } from '$lib/sounds';
+  import { tgUser } from '$lib/telegram';
+  import ChatPanel from '$lib/components/ChatPanel.svelte';
   import '$lib/themes.css';
   import '$lib/skins.css';
 
@@ -21,6 +23,11 @@
   let showThemeSelector = false;
   let showSkinSelector = false;
   let soundEnabled = true;
+
+  // Chat
+  let gameId: string | null = null;
+  let chatOpen = false;
+  let creatingGame = false;
 
   const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -121,6 +128,49 @@
     sounds.setEnabled(soundEnabled);
     if (soundEnabled) sounds.play('select');
   }
+
+  async function openChat() {
+    // En desarrollo usamos un telegram_id de prueba.
+    // En producción usamos el de Telegram.
+    const userId = import.meta.env.DEV
+      ? 5125415147  // ← tu telegram_id real
+      : $tgUser?.id;
+
+    if (!userId) {
+      alert('Abre esta página desde Telegram para usar el chat.');
+      return;
+    }
+
+    if (!gameId) {
+      creatingGame = true;
+      try {
+        const apiUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
+        const res = await fetch(`${apiUrl}/api/games`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telegram_id: userId,
+            opponent_id: 'zkjaozazfd9as3v'
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          gameId = data.game_id;
+        } else {
+          console.error('Error creando partida:', await res.text());
+          alert('Error creando partida. Revisa la consola.');
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de conexión con la API.');
+        return;
+      } finally {
+        creatingGame = false;
+      }
+    }
+    chatOpen = true;
+  }
 </script>
 
 <main>
@@ -153,6 +203,9 @@
     </button>
     <button class="selector-btn icon-only" on:click={toggleSound} title="Activar/desactivar sonido">
       {soundEnabled ? '🔊' : '🔇'}
+    </button>
+    <button class="selector-btn icon-only" on:click={openChat} title="Chat" disabled={creatingGame}>
+      {creatingGame ? '⏳' : '💬'}
     </button>
   </div>
 
@@ -207,6 +260,15 @@
   </nav>
 </main>
 
+{#if chatOpen && gameId && (import.meta.env.DEV || $tgUser)}
+  <ChatPanel
+    {gameId}
+    currentUserId={import.meta.env.DEV ? 5125415147 : $tgUser!.id}
+    isOpen={chatOpen}
+    onClose={() => (chatOpen = false)}
+  />
+{/if}
+
 <style>
   main {
     padding: 1rem;
@@ -247,6 +309,7 @@
   }
   .selector-btn:hover { background: #3a3a3a; }
   .selector-btn.icon-only { padding: 0.5rem 0.75rem; font-size: 1rem; }
+  .selector-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .selector-panel {
     margin-top: 1rem; padding: 1rem; background: #2a2a2a; border-radius: 12px;
