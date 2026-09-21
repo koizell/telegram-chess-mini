@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { Chessground } from 'chessground';
   import { Chess } from 'chess.js';
   import { base } from '$app/paths';
@@ -11,6 +11,7 @@
   import { sounds } from '$lib/sounds';
   import { tgUser } from '$lib/telegram';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import { StockfishEngine, type Difficulty } from '$lib/stockfish';
   import '$lib/themes.css';
   import '$lib/skins.css';
 
@@ -23,6 +24,13 @@
   let showThemeSelector = false;
   let showSkinSelector = false;
   let soundEnabled = true;
+
+  // Modo de juego
+  type GameMode = 'free' | 'vs_ai';
+  let gameMode: GameMode = 'free';
+  let difficulty: Difficulty = 'medium';
+  let thinking = false;
+  let engine: StockfishEngine | null = null;
 
   // Chat
   let gameId: string | null = null;
@@ -68,22 +76,16 @@
     ground.set({
       movable: {
         events: {
-          select: () => {
-            sounds.play('select');
-          },
+          select: () => sounds.play('select'),
           after: (orig, dest) => {
             const move = game.move({ from: orig, to: dest, promotion: 'q' });
             if (move) {
               sounds.play(move.captured ? 'capture' : 'move');
+              updateBoard();
 
-              ground?.set({
-                fen: game.fen(),
-                turnColor: game.turn() === 'w' ? 'white' : 'black',
-                movable: {
-                  color: game.turn() === 'w' ? 'white' : 'black',
-                  dests: getLegalMoves()
-                }
-              });
+              if (gameMode === 'vs_ai' && game.turn() === 'b' && !game.isGameOver()) {
+                makeAiMove();
+              }
             }
           }
         }
@@ -95,8 +97,25 @@
       if (savedTheme) currentTheme = getTheme(savedTheme);
       const savedSkin = localStorage.getItem('chess_skin');
       if (savedSkin) currentSkin = getSkin(savedSkin);
+      const savedDifficulty = localStorage.getItem('chess_difficulty');
+      if (savedDifficulty) difficulty = savedDifficulty as Difficulty;
     }
   });
+
+  onDestroy(() => {
+    engine?.quit();
+  });
+
+  function updateBoard() {
+    ground?.set({
+      fen: game.fen(),
+      turnColor: game.turn() === 'w' ? 'white' : 'black',
+      movable: {
+        color: game.turn() === 'w' ? 'white' : 'black',
+        dests: getLegalMoves()
+      }
+    });
+  }
 
   function getLegalMoves() {
     const dests = new Map<string, string[]>();
@@ -105,6 +124,56 @@
       dests.get(move.from)!.push(move.to);
     });
     return dests;
+  }
+
+  async function makeAiMove() {
+    if (thinking || game.isGameOver()) return;
+    thinking = true;
+
+    if (!engine) {
+      engine = new StockfishEngine();
+      await new Promise<void>((resolve) => engine!.onReady(resolve));
+    }
+
+    try {
+      const bestMove = await engine.getBestMove(game.fen(), difficulty);
+      if (bestMove && bestMove !== '(none)') {
+        const from = bestMove.slice(0, 2);
+        const to = bestMove.slice(2, 4);
+        const promotion = bestMove.length > 4 ? bestMove[4] : 'q';
+
+        const move = game.move({ from, to, promotion });
+        if (move) {
+          sounds.play(move.captured ? 'capture' : 'move');
+          updateBoard();
+        }
+      }
+    } catch (e) {
+      console.error('Error con Stockfish:', e);
+    } finally {
+      thinking = false;
+    }
+  }
+
+  function startVsAI() {
+    game = new Chess();
+    gameMode = 'vs_ai';
+    thinking = false;
+    updateBoard();
+  }
+
+  function resetBoard() {
+    game = new Chess();
+    gameMode = 'free';
+    thinking = false;
+    updateBoard();
+  }
+
+  function setDifficulty(d: Difficulty) {
+    difficulty = d;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('chess_difficulty', d);
+    }
   }
 
   function selectTheme(theme: Theme) {
@@ -130,12 +199,7 @@
   }
 
   async function openChat() {
-    // En desarrollo usamos un telegram_id de prueba.
-    // En producción usamos el de Telegram.
-    const userId = import.meta.env.DEV
-      ? 5125415147  // ← tu telegram_id real
-      : $tgUser?.id;
-
+    const userId = import.meta.env.DEV ? 5125415147 : $tgUser?.id;
     if (!userId) {
       alert('Abre esta página desde Telegram para usar el chat.');
       return;
@@ -148,22 +212,17 @@
         const res = await fetch(`${apiUrl}/api/games`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            telegram_id: userId,
-            opponent_id: 'zkjaozazfd9as3v'
-          })
+          body: JSON.stringify({ telegram_id: userId, opponent_id: 'zkjaozafd9as3v' })
         });
         if (res.ok) {
           const data = await res.json();
           gameId = data.game_id;
         } else {
           console.error('Error creando partida:', await res.text());
-          alert('Error creando partida. Revisa la consola.');
           return;
         }
       } catch (e) {
         console.error(e);
-        alert('Error de conexión con la API.');
         return;
       } finally {
         creatingGame = false;
@@ -173,7 +232,7 @@
   }
 </script>
 
-<main>
+<main on:click={() => (chatOpen = false)}>
   <h1>♟️ Telegram Chess Pi</h1>
 
   <div class="board-layout">
@@ -192,7 +251,23 @@
     </div>
   </div>
 
-  <p class="hint">Haz clic en una pieza blanca para moverla.</p>
+  {#if gameMode === 'vs_ai'}
+    <div class="ai-status">
+      {#if thinking}
+        <span class="thinking">🤔 Stockfish pensando...</span>
+      {:else if game.isGameOver()}
+        <span class="game-over">
+          {game.isCheckmate() ? '♚ ¡Jaque mate!' : game.isDraw() ? '🤝 Tablas' : 'Fin de partida'}
+        </span>
+      {:else}
+        <span class="turn">{game.turn() === 'w' ? '⚪ Tu turno' : '⚫ Turno de Stockfish'}</span>
+      {/if}
+    </div>
+  {/if}
+
+  <p class="hint">
+    {gameMode === 'vs_ai' ? 'Juega contra Stockfish. Mueve una pieza blanca.' : 'Haz clic en una pieza blanca para moverla.'}
+  </p>
 
   <div class="selector-bar">
     <button class="selector-btn" on:click={() => { showThemeSelector = !showThemeSelector; showSkinSelector = false; }}>
@@ -201,12 +276,34 @@
     <button class="selector-btn" on:click={() => { showSkinSelector = !showSkinSelector; showThemeSelector = false; }}>
       ♟️ <strong>{currentSkin.name}</strong>
     </button>
-    <button class="selector-btn icon-only" on:click={toggleSound} title="Activar/desactivar sonido">
+    <button class="selector-btn icon-only" on:click={toggleSound} title="Sonido">
       {soundEnabled ? '🔊' : '🔇'}
     </button>
     <button class="selector-btn icon-only" on:click={openChat} title="Chat" disabled={creatingGame}>
       {creatingGame ? '⏳' : '💬'}
     </button>
+  </div>
+
+  <div class="game-modes">
+    {#if gameMode === 'free'}
+      <button class="mode-btn primary" on:click={startVsAI}>
+        🤖 Jugar vs IA
+      </button>
+    {:else}
+      <button class="mode-btn" on:click={resetBoard}>
+        🔄 Nueva partida
+      </button>
+      <div class="difficulty-selector">
+        {#each ['easy', 'medium', 'hard', 'expert'] as d}
+          <button
+            class="diff-btn {d === difficulty ? 'active' : ''}"
+            on:click={() => setDifficulty(d as Difficulty)}
+          >
+            {d === 'easy' ? '🟢' : d === 'medium' ? '🟡' : d === 'hard' ? '🔴' : '⚫'}
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   {#if showThemeSelector}
@@ -241,11 +338,7 @@
             class="skin-option {skin.id === currentSkin.id ? 'active' : ''}"
             on:click={() => selectSkin(skin)}
           >
-            <img
-              src="{base}/pieces/{skin.id}/wN.svg"
-              alt={skin.name}
-              class="skin-preview-img"
-            />
+            <img src="{base}/pieces/{skin.id}/wN.svg" alt={skin.name} class="skin-preview-img" />
             <div class="option-name">{skin.emoji} {skin.name}</div>
           </button>
         {/each}
@@ -261,12 +354,59 @@
 </main>
 
 {#if chatOpen && gameId && (import.meta.env.DEV || $tgUser)}
-  <ChatPanel
-    {gameId}
-    currentUserId={import.meta.env.DEV ? 5125415147 : $tgUser!.id}
-    isOpen={chatOpen}
-    onClose={() => (chatOpen = false)}
-  />
+  <div on:click|stopPropagation>
+    <ChatPanel
+      {gameId}
+      currentUserId={import.meta.env.DEV ? 5125415147 : $tgUser!.id}
+      isOpen={chatOpen}
+      onClose={() => (chatOpen = false)}
+    />
+  </div>
+{/if}
+
+{#if gameMode === 'vs_ai' && game.isGameOver() && !thinking}
+  <div class="game-over-modal">
+    <div class="modal-content">
+      <div class="modal-emoji">
+        {#if game.isCheckmate()}
+          {game.turn() === 'b' ? '🏆' : '😢'}
+        {:else if game.isDraw()}
+          🤝
+        {:else}
+          🏁
+        {/if}
+      </div>
+
+      <h2 class="modal-title">
+        {#if game.isCheckmate()}
+          {game.turn() === 'b' ? '¡GANASTE!' : 'PERDISTE'}
+        {:else if game.isDraw()}
+          TABLAS
+        {:else}
+          FIN DE PARTIDA
+        {/if}
+      </h2>
+
+      <p class="modal-subtitle">
+        {#if game.isCheckmate()}
+          {game.turn() === 'b' ? 'Jaque mate a Stockfish' : 'Stockfish te dio jaque mate'}
+        {:else if game.isDraw()}
+          {game.isStalemate() ? 'Rey ahogado' : 'Material insuficiente'}
+        {:else}
+          Partida terminada
+        {/if}
+      </p>
+
+      <div class="modal-actions">
+        <button class="modal-btn primary" on:click={startVsAI}>
+          🔄 Revancha
+        </button>
+        <button class="modal-btn" on:click={resetBoard}>
+          🏠 Menú
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 <style>
@@ -296,7 +436,20 @@
     font-size: 0.75rem; font-weight: 600; color: #888; user-select: none;
   }
 
-  .hint { text-align: center; font-size: 0.875rem; opacity: 0.6; margin-top: 1rem; }
+  .ai-status {
+    text-align: center;
+    padding: 0.75rem;
+    margin-top: 0.75rem;
+    background: #2a2a2a;
+    border-radius: 8px;
+    font-size: 0.875rem;
+  }
+
+  .thinking { color: #f0c040; }
+  .turn { color: #4ade80; font-weight: 600; }
+  .game-over { color: #ff6b6b; font-weight: bold; font-size: 1rem; }
+
+  .hint { text-align: center; font-size: 0.875rem; opacity: 0.6; margin-top: 0.5rem; }
 
   .selector-bar {
     display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem;
@@ -310,6 +463,28 @@
   .selector-btn:hover { background: #3a3a3a; }
   .selector-btn.icon-only { padding: 0.5rem 0.75rem; font-size: 1rem; }
   .selector-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .game-modes {
+    display: flex; justify-content: center; align-items: center;
+    gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap;
+  }
+
+  .mode-btn {
+    background: #2a2a2a; color: #fff; border: 1px solid #3a3a3a;
+    border-radius: 8px; padding: 0.6rem 1.2rem; font-size: 0.875rem;
+    cursor: pointer; font-family: inherit;
+  }
+  .mode-btn:hover { background: #3a3a3a; }
+  .mode-btn.primary { background: #1f6f3f; border-color: #4ade80; }
+  .mode-btn.primary:hover { background: #2a8f4f; }
+
+  .difficulty-selector { display: flex; gap: 0.25rem; }
+  .diff-btn {
+    background: #2a2a2a; color: #fff; border: 1px solid #3a3a3a;
+    border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.75rem;
+    cursor: pointer; font-family: inherit;
+  }
+  .diff-btn.active { border-color: #4ade80; background: #1f3a28; }
 
   .selector-panel {
     margin-top: 1rem; padding: 1rem; background: #2a2a2a; border-radius: 12px;
@@ -370,4 +545,91 @@
     display: inline-block;
   }
   nav a:hover { background: #3a3a3a; }
+
+  /* ============================================
+     MODAL DE FIN DE PARTIDA
+     ============================================ */
+  .game-over-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.3s ease-out;
+    padding: 1rem;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal-content {
+    background: #1f1f1f;
+    border-radius: 20px;
+    padding: 2rem 1.5rem;
+    text-align: center;
+    max-width: 340px;
+    width: 100%;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    animation: scaleIn 0.3s ease-out;
+    border: 1px solid #3a3a3a;
+  }
+
+  @keyframes scaleIn {
+    from { transform: scale(0.85); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  .modal-emoji {
+    font-size: 4rem;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-title {
+    font-size: 1.75rem;
+    font-weight: bold;
+    margin: 0.5rem 0;
+    color: #4ade80;
+    letter-spacing: 1px;
+  }
+
+  .modal-subtitle {
+    font-size: 0.875rem;
+    opacity: 0.7;
+    margin-bottom: 1.5rem;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+  }
+
+  .modal-btn {
+    flex: 1;
+    background: #2a2a2a;
+    color: #fff;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+  }
+
+  .modal-btn:hover { background: #3a3a3a; }
+
+  .modal-btn.primary {
+    background: #1f6f3f;
+    border-color: #4ade80;
+  }
+
+  .modal-btn.primary:hover { background: #2a8f4f; }
 </style>
