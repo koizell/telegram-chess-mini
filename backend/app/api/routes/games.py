@@ -227,3 +227,125 @@ async def send_message(game_id: str, msg: MessageRequest):
     except Exception as e:
         logger.error(f"❌ Error en send_message: {e}")
         raise HTTPException(status_code=500, detail="Error interno")
+
+    # ============================================
+# MODELO: Finalizar partida
+# ============================================
+class FinishGameRequest(BaseModel):
+    result: str  # "white_wins" | "black_wins" | "draw"
+    fen: str
+    pgn: str
+    winner_id: Optional[str] = None
+    game_type: str = "vs_bot"  # "vs_bot" | "pvp"
+
+
+# ============================================
+# ENDPOINT: Finalizar partida
+# ============================================
+@router.post("/{game_id}/finish")
+async def finish_game(game_id: str, req: FinishGameRequest):
+    """Marca la partida como finalizada con el resultado."""
+    try:
+        pb.authenticate()
+
+        # Validar result
+        if req.result not in ("white_wins", "black_wins", "draw"):
+            raise HTTPException(status_code=400, detail="Result inválido")
+
+        # Actualizar la partida
+        url = f"{pb.url}/api/collections/games/records/{game_id}"
+        data = {
+            "status": "finished",
+            "result": req.result,
+            "fen": req.fen,
+            "pgn": req.pgn,
+            "game_type": req.game_type,
+        }
+        if req.winner_id:
+            data["winner"] = req.winner_id
+
+        response = requests.patch(url, json=data, headers=pb._headers())
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Error guardando: {response.text}")
+
+        # TODO Fase PvP: aquí actualizaremos el ELO si game_type == "pvp"
+        # if req.game_type == "pvp":
+        #     actualizar_elo(game_id, req.result)
+
+        return {"status": "ok", "game_id": game_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en finish_game: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")
+
+
+# ============================================
+# ENDPOINT: Historial de partidas
+# ============================================
+@router.get("/history/{telegram_id}")
+async def get_history(telegram_id: int, limit: int = 20):
+    """Devuelve las últimas partidas de un usuario."""
+    try:
+        pb.authenticate()
+
+        # Buscar el usuario
+        player = pb.get_user_by_telegram_id(telegram_id)
+        if not player:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        player_id = player["id"]
+
+        # Buscar partidas donde sea white_player o black_player
+        url = f"{pb.url}/api/collections/games/records"
+        params = {
+            "filter": f'(white_player="{player_id}" || black_player="{player_id}") && status="finished"',
+            "sort": "-updated",
+            "perPage": limit,
+            "expand": "white_player,black_player,winner",
+        }
+        response = requests.get(url, headers=pb._headers(), params=params)
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail="Error consultando historial")
+
+        items = response.json().get("items", [])
+        games = []
+        for g in items:
+            white = g.get("expand", {}).get("white_player", {})
+            black = g.get("expand", {}).get("black_player", {})
+            winner_exp = g.get("expand", {}).get("winner", {})
+
+            # Determinar si el jugador fue blancas o negras
+            is_white = white.get("telegram_id") == str(telegram_id)
+            opponent = black if is_white else white
+            player_color = "white" if is_white else "black"
+
+            # Determinar resultado desde la perspectiva del jugador
+            result = g.get("result")
+            if result == "draw":
+                outcome = "draw"
+            elif (result == "white_wins" and is_white) or (result == "black_wins" and not is_white):
+                outcome = "win"
+            else:
+                outcome = "loss"
+
+            games.append({
+                "id": g["id"],
+                "date": g.get("updated", ""),
+                "game_type": g.get("game_type", "vs_bot"),
+                "player_color": player_color,
+                "opponent_name": opponent.get("display_name", "Desconocido"),
+                "opponent_telegram_id": opponent.get("telegram_id"),
+                "outcome": outcome,
+                "result": result,
+                "fen": g.get("fen", ""),
+                "pgn": g.get("pgn", ""),
+                "winner_name": winner_exp.get("display_name") if winner_exp else None,
+            })
+
+        return {"games": games, "total": len(games)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error en get_history: {e}")
+        raise HTTPException(status_code=500, detail="Error interno")

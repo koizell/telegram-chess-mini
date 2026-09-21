@@ -56,6 +56,8 @@ class PocketBaseClient:
             "email": f"{telegram_id}@bttpi.local",
             "password": f"pb_{telegram_id}_secret",
             "passwordConfirm": f"pb_{telegram_id}_secret",
+            "verified": True,
+            "emailVisibility": True,
         }
         response = requests.post(url, json=data, headers=self._headers())
         if response.status_code != 200:

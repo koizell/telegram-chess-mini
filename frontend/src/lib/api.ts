@@ -30,3 +30,38 @@ export async function getUser(telegramId: number) {
   if (!res.ok) throw new Error('Usuario no encontrado');
   return res.json();
 }
+
+
+/**
+ * Finaliza una partida guardando el resultado.
+ */
+export async function finishGame(
+  gameId: string,
+  payload: {
+    result: string;
+    fen: string;
+    pgn: string;
+    winner_id?: string | null;
+    game_type?: string;
+  }
+) {
+  const res = await fetch(`${API_URL}/api/games/${gameId}/finish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      game_type: 'vs_bot',
+      ...payload
+    })
+  });
+  if (!res.ok) throw new Error('Error finalizando partida');
+  return res.json();
+}
+
+/**
+ * Obtiene el historial de partidas de un usuario.
+ */
+export async function getHistory(telegramId: number, limit: number = 20) {
+  const res = await fetch(`${API_URL}/api/games/history/${telegramId}?limit=${limit}`);
+  if (!res.ok) throw new Error('Error obteniendo historial');
+  return res.json();
+}

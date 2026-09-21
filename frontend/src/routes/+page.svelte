@@ -12,6 +12,7 @@
   import { tgUser } from '$lib/telegram';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import { StockfishEngine, type Difficulty } from '$lib/stockfish';
+  import { finishGame } from '$lib/api';
   import '$lib/themes.css';
   import '$lib/skins.css';
 
@@ -32,10 +33,14 @@
   let thinking = false;
   let engine: StockfishEngine | null = null;
 
+  // Partida guardada en PocketBase
+  let aiGameId: string | null = null;
+  let gameSaved = false;
+  let creatingGame = false;
+
   // Chat
   let gameId: string | null = null;
   let chatOpen = false;
-  let creatingGame = false;
 
   const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -56,6 +61,14 @@
       --bk: url('${base}/pieces/${currentSkin.id}/bK.svg');
     `
     : '';
+
+  function getApiUrl() {
+    return import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
+  }
+
+  function getUserId(): number | null {
+    return import.meta.env.DEV ? 5125415147 : ($tgUser?.id ?? null);
+  }
 
   onMount(() => {
     if (!boardElement) return;
@@ -83,8 +96,12 @@
               sounds.play(move.captured ? 'capture' : 'move');
               updateBoard();
 
-              if (gameMode === 'vs_ai' && game.turn() === 'b' && !game.isGameOver()) {
-                makeAiMove();
+              if (gameMode === 'vs_ai') {
+                if (game.isGameOver()) {
+                  saveGameResult();
+                } else if (game.turn() === 'b') {
+                  makeAiMove();
+                }
               }
             }
           }
@@ -146,6 +163,10 @@
         if (move) {
           sounds.play(move.captured ? 'capture' : 'move');
           updateBoard();
+
+          if (game.isGameOver()) {
+            saveGameResult();
+          }
         }
       }
     } catch (e) {
@@ -155,17 +176,71 @@
     }
   }
 
-  function startVsAI() {
+  async function startVsAI() {
     game = new Chess();
     gameMode = 'vs_ai';
     thinking = false;
+    gameSaved = false;
+    aiGameId = null;
     updateBoard();
+
+    // Crear la partida en PocketBase
+    const userId = getUserId();
+    if (!userId) return;
+
+    creatingGame = true;
+    try {
+      const res = await fetch(`${getApiUrl()}/api/games`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_id: userId, opponent_id: 'zkjaozazfd9as3v' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        aiGameId = data.game_id;
+        console.log('✅ Partida creada:', aiGameId);
+      } else {
+        console.error('Error creando partida:', await res.text());
+      }
+    } catch (e) {
+      console.error('Error creando partida:', e);
+    } finally {
+      creatingGame = false;
+    }
+  }
+
+  async function saveGameResult() {
+    if (!aiGameId || gameSaved) return;
+    gameSaved = true;
+
+    try {
+      let result: string;
+      if (game.isCheckmate()) {
+        // El ganador es el jugador que acaba de mover
+        result = game.turn() === 'b' ? 'white_wins' : 'black_wins';
+      } else {
+        result = 'draw';
+      }
+
+      await finishGame(aiGameId, {
+        result,
+        fen: game.fen(),
+        pgn: game.pgn(),
+        game_type: 'vs_bot'
+      });
+
+      console.log('✅ Partida guardada:', result);
+    } catch (e) {
+      console.error('Error guardando partida:', e);
+    }
   }
 
   function resetBoard() {
     game = new Chess();
     gameMode = 'free';
     thinking = false;
+    gameSaved = false;
+    aiGameId = null;
     updateBoard();
   }
 
@@ -199,7 +274,7 @@
   }
 
   async function openChat() {
-    const userId = import.meta.env.DEV ? 5125415147 : $tgUser?.id;
+    const userId = getUserId();
     if (!userId) {
       alert('Abre esta página desde Telegram para usar el chat.');
       return;
@@ -208,11 +283,10 @@
     if (!gameId) {
       creatingGame = true;
       try {
-        const apiUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
-        const res = await fetch(`${apiUrl}/api/games`, {
+        const res = await fetch(`${getApiUrl()}/api/games`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ telegram_id: userId, opponent_id: 'zkjaozafd9as3v' })
+          body: JSON.stringify({ telegram_id: userId, opponent_id: 'zkjaozazfd9as3v' })
         });
         if (res.ok) {
           const data = await res.json();
@@ -279,15 +353,15 @@
     <button class="selector-btn icon-only" on:click={toggleSound} title="Sonido">
       {soundEnabled ? '🔊' : '🔇'}
     </button>
-    <button class="selector-btn icon-only" on:click={openChat} title="Chat" disabled={creatingGame}>
-      {creatingGame ? '⏳' : '💬'}
+    <button class="selector-btn icon-only" on:click={openChat} title="Chat">
+      💬
     </button>
   </div>
 
   <div class="game-modes">
     {#if gameMode === 'free'}
-      <button class="mode-btn primary" on:click={startVsAI}>
-        🤖 Jugar vs IA
+      <button class="mode-btn primary" on:click={startVsAI} disabled={creatingGame}>
+        {creatingGame ? '⏳ Creando...' : '🤖 Jugar vs IA'}
       </button>
     {:else}
       <button class="mode-btn" on:click={resetBoard}>
@@ -437,14 +511,9 @@
   }
 
   .ai-status {
-    text-align: center;
-    padding: 0.75rem;
-    margin-top: 0.75rem;
-    background: #2a2a2a;
-    border-radius: 8px;
-    font-size: 0.875rem;
+    text-align: center; padding: 0.75rem; margin-top: 0.75rem;
+    background: #2a2a2a; border-radius: 8px; font-size: 0.875rem;
   }
-
   .thinking { color: #f0c040; }
   .turn { color: #4ade80; font-weight: 600; }
   .game-over { color: #ff6b6b; font-weight: bold; font-size: 1rem; }
@@ -462,7 +531,6 @@
   }
   .selector-btn:hover { background: #3a3a3a; }
   .selector-btn.icon-only { padding: 0.5rem 0.75rem; font-size: 1rem; }
-  .selector-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .game-modes {
     display: flex; justify-content: center; align-items: center;
@@ -475,8 +543,9 @@
     cursor: pointer; font-family: inherit;
   }
   .mode-btn:hover { background: #3a3a3a; }
+  .mode-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .mode-btn.primary { background: #1f6f3f; border-color: #4ade80; }
-  .mode-btn.primary:hover { background: #2a8f4f; }
+  .mode-btn.primary:hover:not(:disabled) { background: #2a8f4f; }
 
   .difficulty-selector { display: flex; gap: 0.25rem; }
   .diff-btn {
@@ -546,90 +615,42 @@
   }
   nav a:hover { background: #3a3a3a; }
 
-  /* ============================================
-     MODAL DE FIN DE PARTIDA
-     ============================================ */
+  /* Modal de fin de partida */
   .game-over-modal {
-    position: fixed;
-    inset: 0;
+    position: fixed; inset: 0;
     background: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    animation: fadeIn 0.3s ease-out;
-    padding: 1rem;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 2000; animation: fadeIn 0.3s ease-out; padding: 1rem;
   }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
   .modal-content {
-    background: #1f1f1f;
-    border-radius: 20px;
-    padding: 2rem 1.5rem;
-    text-align: center;
-    max-width: 340px;
-    width: 100%;
+    background: #1f1f1f; border-radius: 20px; padding: 2rem 1.5rem;
+    text-align: center; max-width: 340px; width: 100%;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
     animation: scaleIn 0.3s ease-out;
     border: 1px solid #3a3a3a;
   }
-
   @keyframes scaleIn {
     from { transform: scale(0.85); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
   }
 
-  .modal-emoji {
-    font-size: 4rem;
-    line-height: 1;
-    margin-bottom: 0.5rem;
-  }
-
+  .modal-emoji { font-size: 4rem; line-height: 1; margin-bottom: 0.5rem; }
   .modal-title {
-    font-size: 1.75rem;
-    font-weight: bold;
-    margin: 0.5rem 0;
-    color: #4ade80;
-    letter-spacing: 1px;
+    font-size: 1.75rem; font-weight: bold; margin: 0.5rem 0;
+    color: #4ade80; letter-spacing: 1px;
   }
-
-  .modal-subtitle {
-    font-size: 0.875rem;
-    opacity: 0.7;
-    margin-bottom: 1.5rem;
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-  }
-
+  .modal-subtitle { font-size: 0.875rem; opacity: 0.7; margin-bottom: 1.5rem; }
+  .modal-actions { display: flex; gap: 0.5rem; justify-content: center; }
   .modal-btn {
-    flex: 1;
-    background: #2a2a2a;
-    color: #fff;
-    border: 1px solid #3a3a3a;
-    border-radius: 10px;
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    cursor: pointer;
-    font-family: inherit;
-    font-weight: 600;
+    flex: 1; background: #2a2a2a; color: #fff; border: 1px solid #3a3a3a;
+    border-radius: 10px; padding: 0.75rem 1rem; font-size: 0.875rem;
+    cursor: pointer; font-family: inherit; font-weight: 600;
   }
-
   .modal-btn:hover { background: #3a3a3a; }
-
-  .modal-btn.primary {
-    background: #1f6f3f;
-    border-color: #4ade80;
-  }
-
+  .modal-btn.primary { background: #1f6f3f; border-color: #4ade80; }
   .modal-btn.primary:hover { background: #2a8f4f; }
 </style>
