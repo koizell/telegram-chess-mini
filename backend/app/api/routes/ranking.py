@@ -13,14 +13,17 @@ router = APIRouter(prefix="/api/ranking", tags=["ranking"])
 
 @router.get("")
 async def get_ranking(limit: int = 10):
-    """Devuelve el top N de jugadores por ELO."""
+    """Devuelve el top N de jugadores por ELO.
+    Excluye al usuario bot (telegram_id = 0).
+    """
     try:
         pb.authenticate()
         url = f"{pb.url}/api/collections/users/records"
         params = {
             "sort": "-elo",
             "perPage": limit,
-            "filter": 'telegram_id != ""',
+            # Excluir al bot (telegram_id = "0") y usuarios sin telegram_id
+            "filter": 'telegram_id != "0" && telegram_id != ""',
         }
         response = requests.get(url, headers=pb._headers(), params=params)
         if response.status_code != 200:
