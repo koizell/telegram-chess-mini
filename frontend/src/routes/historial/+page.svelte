@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
-  import { tgUser } from '$lib/telegram';
+  import { tgUser, isTelegram } from '$lib/telegram';
   import { getHistory } from '$lib/api';
 
   interface Game {
@@ -20,18 +20,22 @@
   let games: Game[] = [];
   let loading = true;
   let error = '';
+  let loaded = false;
 
   function getUserId(): number | null {
-    return import.meta.env.DEV ? 5125415147 : ($tgUser?.id ?? null);
+    if (import.meta.env.DEV) return 5125415147;
+    return $tgUser?.id ?? null;
   }
 
   async function loadHistory() {
+    if (loaded) return;
+
     const userId = getUserId();
-    if (!userId) {
-      error = 'Abre esta página desde Telegram para ver tu historial.';
-      loading = false;
-      return;
-    }
+    if (!userId) return;
+
+    loaded = true;
+    loading = true;
+    error = '';
 
     try {
       const data = await getHistory(userId, 30);
@@ -43,6 +47,27 @@
       loading = false;
     }
   }
+
+  // Reaccionar cuando tgUser esté disponible (reactividad de Svelte)
+  $: if ($tgUser && !loaded) {
+    loadHistory();
+  }
+
+  onMount(() => {
+    // Si ya está disponible al montar, cargar directo
+    if (getUserId()) {
+      loadHistory();
+      return;
+    }
+
+    // Timeout de seguridad: si en 1.5s no hay user, mostrar error
+    setTimeout(() => {
+      if (!loaded && !getUserId()) {
+        loading = false;
+        error = 'Abre esta página desde Telegram para ver tu historial.';
+      }
+    }, 1500);
+  });
 
   function formatDate(iso: string): string {
     try {
@@ -85,8 +110,6 @@
   function colorText(color: string): string {
     return color === 'white' ? '⚪ Blancas' : '⚫ Negras';
   }
-
-  onMount(loadHistory);
 </script>
 
 <main>
@@ -237,6 +260,7 @@
   .game-item.win { border-left-color: #4ade80; }
   .game-item.loss { border-left-color: #ff6b6b; }
   .game-item.draw { border-left-color: #f0c040; }
+  .game-item.aborted { border-left-color: #666; opacity: 0.7; }
 
   .row-1, .row-2, .row-3 {
     display: flex;
@@ -263,12 +287,9 @@
   .outcome.win { color: #4ade80; }
   .outcome.loss { color: #ff6b6b; }
   .outcome.draw { color: #f0c040; }
+  .outcome.aborted { color: #888; }
 
   .date { font-size: 0.75rem; opacity: 0.6; font-weight: normal; }
 
   .opponent strong { color: #fff; }
-
-  .game-item.aborted { border-left-color: #666; opacity: 0.7; }
-  .outcome.aborted { color: #888; }
-
 </style>
