@@ -177,6 +177,27 @@
   }
 
   async function startVsAI() {
+    // Si había una partida activa sin terminar, marcarla como abandonada
+    if (aiGameId && !gameSaved) {
+      try {
+        const apiUrl = getApiUrl();
+        await fetch(`${apiUrl}/api/games/${aiGameId}/finish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            result: 'draw',
+            fen: game.fen(),
+            pgn: game.pgn(),
+            game_type: 'vs_bot'
+          })
+        });
+        console.log('🗑️ Partida anterior marcada como terminada');
+      } catch (e) {
+        console.warn('No se pudo cerrar la partida anterior:', e);
+      }
+    }
+
+    // Reiniciar estado
     game = new Chess();
     gameMode = 'vs_ai';
     thinking = false;
@@ -184,7 +205,7 @@
     aiGameId = null;
     updateBoard();
 
-    // Crear la partida en PocketBase
+    // Crear la nueva partida en PocketBase
     const userId = getUserId();
     if (!userId) return;
 
@@ -235,7 +256,28 @@
     }
   }
 
-  function resetBoard() {
+  async function resetBoard() {
+    // Si había una partida activa sin terminar, marcarla como terminada
+    if (aiGameId && !gameSaved) {
+      try {
+        const apiUrl = getApiUrl();
+        await fetch(`${apiUrl}/api/games/${aiGameId}/finish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            result: 'draw',
+            fen: game.fen(),
+            pgn: game.pgn(),
+            game_type: 'vs_bot'
+          })
+        });
+        console.log('🗑️ Partida anterior cerrada (desde Menú)');
+      } catch (e) {
+        console.warn('No se pudo cerrar la partida anterior:', e);
+      }
+    }
+
+    // Reiniciar estado
     game = new Chess();
     gameMode = 'free';
     thinking = false;
