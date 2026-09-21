@@ -66,6 +66,7 @@
   <nav>
     <a href="{base}/">← Volver al tablero</a>
     <a href="{base}/ranking">🏆 Ranking</a>
+    <a href="{base}/historial">📜 Historial</a>
   </nav>
 </main>
 

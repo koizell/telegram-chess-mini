@@ -249,30 +249,35 @@ async def finish_game(game_id: str, req: FinishGameRequest):
         pb.authenticate()
 
         # Validar result
-        if req.result not in ("white_wins", "black_wins", "draw"):
+        if req.result not in ("white_wins", "black_wins", "draw", "aborted"):
             raise HTTPException(status_code=400, detail="Result inválido")
 
-        # Actualizar la partida
-        url = f"{pb.url}/api/collections/games/records/{game_id}"
+        is_aborted = req.result == "aborted"
+
+        # Construir datos según si es aborted o no
         data = {
-            "status": "finished",
-            "result": req.result,
             "fen": req.fen,
             "pgn": req.pgn,
             "game_type": req.game_type,
         }
-        if req.winner_id:
-            data["winner"] = req.winner_id
 
+        if is_aborted:
+            # Partida abandonada: status aborted, sin resultado, sin winner
+            data["status"] = "aborted"
+        else:
+            # Partida finalizada normalmente
+            data["status"] = "finished"
+            data["result"] = req.result
+            if req.winner_id:
+                data["winner"] = req.winner_id
+
+        # Actualizar la partida
+        url = f"{pb.url}/api/collections/games/records/{game_id}"
         response = requests.patch(url, json=data, headers=pb._headers())
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Error guardando: {response.text}")
 
-        # TODO Fase PvP: aquí actualizaremos el ELO si game_type == "pvp"
-        # if req.game_type == "pvp":
-        #     actualizar_elo(game_id, req.result)
-
-        return {"status": "ok", "game_id": game_id}
+        return {"status": "ok", "game_id": game_id, "aborted": is_aborted}
     except HTTPException:
         raise
     except Exception as e:
@@ -322,7 +327,10 @@ async def get_history(telegram_id: int, limit: int = 20):
 
             # Determinar resultado desde la perspectiva del jugador
             result = g.get("result")
-            if result == "draw":
+            status = g.get("status")
+            if status == "aborted":
+                outcome = "aborted"
+            elif result == "draw":
                 outcome = "draw"
             elif (result == "white_wins" and is_white) or (result == "black_wins" and not is_white):
                 outcome = "win"
@@ -338,6 +346,7 @@ async def get_history(telegram_id: int, limit: int = 20):
                 "opponent_telegram_id": opponent.get("telegram_id"),
                 "outcome": outcome,
                 "result": result,
+                "status": status,
                 "fen": g.get("fen", ""),
                 "pgn": g.get("pgn", ""),
                 "winner_name": winner_exp.get("display_name") if winner_exp else None,

@@ -185,7 +185,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            result: 'draw',
+            result: 'aborted',
             fen: game.fen(),
             pgn: game.pgn(),
             game_type: 'vs_bot'
@@ -265,7 +265,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            result: 'draw',
+            result: 'aborted',
             fen: game.fen(),
             pgn: game.pgn(),
             game_type: 'vs_bot'
