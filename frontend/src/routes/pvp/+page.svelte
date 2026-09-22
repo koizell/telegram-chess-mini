@@ -12,7 +12,15 @@
   let timerInterval: ReturnType<typeof setInterval> | null = null;
 
   function getUserId(): number | null {
-    if (import.meta.env.DEV) return 5125415147;
+    if (import.meta.env.DEV) {
+      // En desarrollo, permitir override por URL: ?dev_user=123
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const override = params.get('dev_user');
+        if (override) return parseInt(override);
+      }
+      return 5125415147;
+    }
     return $tgUser?.id ?? null;
   }
 

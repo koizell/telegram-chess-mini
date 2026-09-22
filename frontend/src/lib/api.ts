@@ -112,15 +112,19 @@ export async function makePvpMove(
   toSquare: string,
   promotion?: string
 ) {
+  const body: any = {
+    telegram_id: telegramId,
+    from_square: fromSquare,
+    to_square: toSquare
+  };
+
+  // Solo añadir promotion si viene definido
+  if (promotion) body.promotion = promotion;
+
   const res = await fetch(`${API_URL}/api/games/${gameId}/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      telegram_id: telegramId,
-      from_square: fromSquare,
-      to_square: toSquare,
-      promotion: promotion || null
-    })
+    body: JSON.stringify(body)
   });
 
   if (!res.ok) {
