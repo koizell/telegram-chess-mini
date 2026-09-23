@@ -29,12 +29,25 @@
 	let currentTurn: 'white' | 'black' = 'white';
 	let gameOver = false;
 	let gameResult: string | null = null;
-	let pollingInterval: ReturnType<typeof setInterval> | null = null;
 	let lastFen = '';
 	let chatOpen = false;
+	let chatPanelRef: ChatPanel;
 
 	let currentTheme: Theme = THEMES[0];
 	let currentSkin: Skin = SKINS[0];
+
+	// Relojes
+	let timeWhiteMs = 600000;
+	let timeBlackMs = 600000;
+	let timeControlMs = 600000;
+	let lastMoveAt = '';
+	let clockInterval: ReturnType<typeof setInterval> | null = null;
+	let nowMs = Date.now();
+	let clockOffsetMs = 0;
+	let showSurrenderModal = false;
+
+	// SSE
+	let eventSource: EventSource | null = null;
 
 	const ranks = [8, 7, 6, 5, 4, 3, 2, 1];
 	const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -56,6 +69,10 @@
     `
 		: '';
 
+	// Display reactivo de los relojes
+	$: displayWhite = getDisplayTime('white', nowMs);
+	$: displayBlack = getDisplayTime('black', nowMs);
+
 	function getUserId(): number | null {
 		if (import.meta.env.DEV) {
 			if (typeof window !== 'undefined') {
@@ -68,6 +85,10 @@
 		return $tgUser?.id ?? null;
 	}
 
+	function getApiUrl(): string {
+		return import.meta.env.DEV ? '' : import.meta.env.VITE_API_URL || '';
+	}
+
 	async function loadGame() {
 		try {
 			const data = await getGame(gameId);
@@ -77,20 +98,32 @@
 			gameOver = data.status === 'finished' || data.status === 'aborted';
 			gameResult = data.result || null;
 
+			timeWhiteMs = data.time_white_ms || 600000;
+			timeBlackMs = data.time_black_ms || 600000;
+			timeControlMs = data.time_control_ms || 600000;
+			lastMoveAt = data.last_move_at || '';
+
+			if (data.current_turn) {
+				currentTurn = data.current_turn;
+			}
+
+			if (data.server_now) {
+				clockOffsetMs = new Date(data.server_now).getTime() - Date.now();
+				console.log('⏰ Clock offset:', clockOffsetMs, 'ms');
+			}
+
+			nowMs = Date.now();
+
 			const userId = getUserId();
 			const isWhite = String(data.white_player_telegram_id) === String(userId);
 			playerColor = isWhite ? 'white' : 'black';
 			playerColorLabel = isWhite ? '⚪ Blancas' : '⚫ Negras';
 			opponentName = (isWhite ? data.black_player_name : data.white_player_name) || 'Oponente';
 
-			// 1. Primero renderizar el DOM (quitar el loading)
 			loading = false;
-
-			// 2. Esperar a que Svelte actualice el DOM
 			await tick();
-			await new Promise((r) => setTimeout(r, 50)); // pequeño delay extra
+			await new Promise((r) => setTimeout(r, 50));
 
-			// 3. Ahora sí, inicializar Chessground
 			if (boardElement) {
 				const myColor = playerColor;
 				const canMove = !gameOver && currentTurn === myColor;
@@ -109,7 +142,6 @@
 				ground.set({
 					movable: {
 						events: {
-							select: () => sounds.play('select'),
 							after: (orig, dest) => handlePlayerMove(orig, dest)
 						}
 					}
@@ -117,7 +149,8 @@
 			}
 
 			if (!gameOver) {
-				startPolling();
+				startSSE();
+				startClock();
 			}
 		} catch (e: any) {
 			error = e.message || 'Error cargando la partida';
@@ -135,14 +168,12 @@
 	}
 
 	async function handlePlayerMove(orig: string, dest: string) {
-		// ─── CAPA 1: Verificaciones previas ───
 		if (gameOver) {
 			if (ground) ground.set({ fen: game.fen() });
 			return;
 		}
 
 		if (currentTurn !== playerColor) {
-			// No es tu turno: silenciosamente ignorar (Chessground ya lo bloquea)
 			if (ground) ground.set({ fen: game.fen() });
 			return;
 		}
@@ -153,23 +184,18 @@
 			return;
 		}
 
-		// ─── CAPA 2: Validación local con chess.js ───
-		// Detectar si es una promoción (peón llegando a última fila)
 		const piece = game.get(orig as any);
 		const isPromotion =
 			piece?.type === 'p' &&
 			((piece.color === 'w' && dest[1] === '8') || (piece.color === 'b' && dest[1] === '1'));
 
-		// Construir el movimiento en chess.js
 		const moveInput: any = { from: orig, to: dest };
 		if (isPromotion) moveInput.promotion = 'q';
 
-		// Validar localmente: si chess.js lo rechaza, no enviamos nada
 		let move;
 		try {
 			move = game.move(moveInput);
 		} catch (e) {
-			// Movimiento ilegal, revertir visual
 			if (ground) ground.set({ fen: game.fen() });
 			return;
 		}
@@ -179,10 +205,8 @@
 			return;
 		}
 
-		// Si llegamos aquí, el movimiento es válido localmente
 		sounds.play(move.captured ? 'capture' : 'move');
 
-		// Actualizar tablero (bloquear movimientos durante el envío)
 		ground?.set({
 			fen: game.fen(),
 			turnColor: currentTurn === 'white' ? 'black' : 'white',
@@ -192,49 +216,103 @@
 			}
 		});
 
-		// ─── CAPA 3: Enviar al backend ───
 		try {
 			const res = await makePvpMove(gameId, userId, orig, dest, isPromotion ? 'q' : undefined);
 
 			lastFen = res.fen;
+
+			// Actualizar estado local tras nuestro movimiento
+			currentTurn = game.turn() === 'w' ? 'white' : 'black';
+			lastMoveAt = new Date(Date.now() + clockOffsetMs).toISOString();
+			nowMs = Date.now();
 
 			if (res.is_game_over) {
 				handleGameOver(res.result);
 				return;
 			}
 
-			// Cambiar turno y desbloquear si vuelve a ser tu turno (nunca en PvP)
-			currentTurn = currentTurn === 'white' ? 'black' : 'white';
 			updateBoardState();
 		} catch (e: any) {
-			// Solo log en consola, sin mostrar error al usuario
 			console.warn('Error sincronizando movimiento:', e.message);
-
-			// Revertir tablero al estado anterior
 			game = new Chess(lastFen);
 			currentTurn = game.turn() === 'w' ? 'white' : 'black';
 			updateBoardState();
 		}
 	}
 
-	async function checkOpponentMove() {
-		if (gameOver) return;
-		try {
-			const data = await getGame(gameId);
+	// ═══════════════════════════════════════════════════════
+	// SSE (Server-Sent Events)
+	// ═══════════════════════════════════════════════════════
+	function startSSE() {
+		const userId = getUserId();
+		if (!userId) return;
 
-			if (data.fen !== lastFen) {
-				game = new Chess(data.fen);
-				lastFen = data.fen;
-				currentTurn = game.turn() === 'w' ? 'white' : 'black';
-				sounds.play('move');
-				updateBoardState();
+		const url = `${getApiUrl()}/api/games/${gameId}/stream?telegram_id=${userId}`;
+		console.log('🔌 Iniciando SSE:', url);
 
+		eventSource = new EventSource(url);
+
+		eventSource.addEventListener('open', () => {
+			console.log('✅ SSE conectado');
+		});
+
+		eventSource.addEventListener('fen_update', (e: MessageEvent) => {
+			try {
+				const data = JSON.parse(e.data);
+
+				if (typeof data.time_white_ms === 'number') timeWhiteMs = data.time_white_ms;
+				if (typeof data.time_black_ms === 'number') timeBlackMs = data.time_black_ms;
+				if (data.last_move_at) lastMoveAt = data.last_move_at;
+
+				if (data.fen && data.fen !== lastFen) {
+					game = new Chess(data.fen);
+					lastFen = data.fen;
+					currentTurn = game.turn() === 'w' ? 'white' : 'black';
+					nowMs = Date.now();
+					sounds.play('move');
+					updateBoardState();
+
+					if (data.status === 'finished' || data.status === 'aborted') {
+						handleGameOver(data.result);
+					}
+				}
+			} catch (err) {
+				console.error('Error procesando fen_update:', err);
+			}
+		});
+
+		eventSource.addEventListener('status_change', (e: MessageEvent) => {
+			try {
+				const data = JSON.parse(e.data);
 				if (data.status === 'finished' || data.status === 'aborted') {
 					handleGameOver(data.result);
 				}
+			} catch (err) {
+				console.error('Error procesando status_change:', err);
 			}
-		} catch (e) {
-			console.debug('Error en polling:', e);
+		});
+
+		eventSource.addEventListener('chat_message', (e: MessageEvent) => {
+			console.log('💬 Nuevo mensaje de chat recibido');
+			if (chatPanelRef && chatOpen) {
+				chatPanelRef.refresh();
+			}
+		});
+
+		eventSource.addEventListener('heartbeat', () => {
+			// Mantiene viva la conexión
+		});
+
+		eventSource.addEventListener('error', () => {
+			console.warn('⚠️ SSE error, el navegador reconectará automáticamente');
+		});
+	}
+
+	function stopSSE() {
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+			console.log('🔌 SSE cerrado');
 		}
 	}
 
@@ -251,22 +329,49 @@
 		});
 	}
 
-	function startPolling() {
-		// Polling cada 1 segundo (baja latencia)
-		pollingInterval = setInterval(checkOpponentMove, 1000);
+	function startClock() {
+		if (clockInterval) clearInterval(clockInterval);
+		clockInterval = setInterval(() => {
+			nowMs = Date.now();
+		}, 100);
 	}
 
-	function stopPolling() {
-		if (pollingInterval) {
-			clearInterval(pollingInterval);
-			pollingInterval = null;
+	function stopClock() {
+		if (clockInterval) {
+			clearInterval(clockInterval);
+			clockInterval = null;
 		}
+	}
+
+	function getDisplayTime(color: 'white' | 'black', _nowMs: number): string {
+		const base = color === 'white' ? timeWhiteMs : timeBlackMs;
+		let remaining = base;
+
+		if (!gameOver && currentTurn === color && lastMoveAt) {
+			const serverNowEstimate = _nowMs + clockOffsetMs;
+			const lastMoveMs = new Date(lastMoveAt).getTime();
+			const elapsed = Math.max(0, serverNowEstimate - lastMoveMs);
+			remaining = Math.max(0, base - elapsed);
+		}
+
+		if (remaining <= 0) return '0:00';
+		const totalSec = Math.ceil(remaining / 1000);
+		const m = Math.floor(totalSec / 60);
+		const s = totalSec % 60;
+		return `${m}:${s.toString().padStart(2, '0')}`;
+	}
+
+	function isLowTime(color: 'white' | 'black'): boolean {
+		const display = getDisplayTime(color, nowMs);
+		const [m, s] = display.split(':').map(Number);
+		return m === 0 && s <= 30;
 	}
 
 	function handleGameOver(result: string | null) {
 		gameOver = true;
 		gameResult = result;
-		stopPolling();
+		stopSSE();
+		stopClock();
 
 		if (ground) {
 			ground.set({
@@ -301,8 +406,16 @@
 		return isWinner ? '🏆' : '😢';
 	}
 
-	async function surrender() {
-		if (!confirm('¿Seguro que quieres rendirte?')) return;
+	function openSurrenderModal() {
+		showSurrenderModal = true;
+	}
+
+	function closeSurrenderModal() {
+		showSurrenderModal = false;
+	}
+
+	async function confirmSurrender() {
+		showSurrenderModal = false;
 		const userId = getUserId();
 		if (!userId) return;
 
@@ -338,10 +451,13 @@
 		setTimeout(loadGame, 100);
 	});
 
-	onDestroy(stopPolling);
+	onDestroy(() => {
+		stopSSE();
+		stopClock();
+	});
 </script>
 
-<main on:click={() => (chatOpen = false)}>
+<main>
 	{#if loading}
 		<div class="loading-state">
 			<div class="spinner"></div>
@@ -360,8 +476,17 @@
 		</header>
 
 		<div class="player-bar">
-			<span class="name">{opponentName}</span>
-			<span class="color-label">{playerColor === 'white' ? '⚫ Negras' : '⚪ Blancas'}</span>
+			<div class="player-info">
+				<span class="name">{opponentName}</span>
+				<span class="color-label">{playerColor === 'white' ? '⚫ Negras' : '⚪ Blancas'}</span>
+			</div>
+			<div
+				class="clock"
+				class:low={isLowTime(playerColor === 'white' ? 'black' : 'white')}
+				class:active={!gameOver && currentTurn !== playerColor}
+			>
+				{playerColor === 'white' ? displayBlack : displayWhite}
+			</div>
 		</div>
 
 		<div class="board-layout">
@@ -379,29 +504,38 @@
 		</div>
 
 		<div class="player-bar">
-			<span class="name">Tú</span>
-			<span class="color-label">{playerColorLabel}</span>
+			<div class="player-info">
+				<span class="name">Tú</span>
+				<span class="color-label">{playerColorLabel}</span>
+			</div>
+			<div
+				class="clock"
+				class:low={isLowTime(playerColor)}
+				class:active={!gameOver && currentTurn === playerColor}
+			>
+				{playerColor === 'white' ? displayWhite : displayBlack}
+			</div>
 		</div>
 
-    <div class="status-bar">
-      {#if gameOver}
-        <span class="status-end">{getResultEmoji()} Partida terminada</span>
-      {:else if currentTurn === playerColor}
-        <span class="status-turn">🎯 Tu turno</span>
-      {:else}
-        <span class="status-wait">
-          ⏳ {opponentName} pensando
-          <span class="dots">
-            <span>.</span><span>.</span><span>.</span>
-          </span>
-        </span>
-      {/if}
-    </div>
+		<div class="status-bar">
+			{#if gameOver}
+				<span class="status-end">{getResultEmoji()} Partida terminada</span>
+			{:else if currentTurn === playerColor}
+				<span class="status-turn">🎯 Tu turno</span>
+			{:else}
+				<span class="status-wait">
+					⏳ {opponentName} pensando
+					<span class="dots">
+						<span>.</span><span>.</span><span>.</span>
+					</span>
+				</span>
+			{/if}
+		</div>
 
 		<div class="action-bar">
 			<button class="action-btn" on:click={() => (chatOpen = !chatOpen)}>💬 Chat</button>
 			{#if !gameOver}
-				<button class="action-btn danger" on:click={surrender}>🏳️ Rendirse</button>
+				<button class="action-btn danger" on:click={openSurrenderModal}>🏳️ Rendirse</button>
 			{:else}
 				<a href="{base}/pvp" class="action-btn">🔄 Nueva partida</a>
 			{/if}
@@ -409,9 +543,25 @@
 	{/if}
 </main>
 
+{#if showSurrenderModal}
+	<div class="confirm-modal">
+		<div class="confirm-content">
+			<div class="confirm-emoji">🏳️</div>
+			<h3 class="confirm-title">¿Rendirse?</h3>
+			<p class="confirm-text">Perderás la partida y perderás ELO.</p>
+			<div class="confirm-actions">
+				<button class="confirm-btn cancel" on:click={closeSurrenderModal}>Cancelar</button>
+				<button class="confirm-btn danger" on:click={confirmSurrender}>Sí, rendirse</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if chatOpen && gameId && !loading}
-	<div on:click|stopPropagation>
+	<button class="chat-backdrop" aria-label="Cerrar chat" on:click={() => (chatOpen = false)}></button>
+	<div>
 		<ChatPanel
+			bind:this={chatPanelRef}
 			{gameId}
 			currentUserId={getUserId() || 0}
 			isOpen={chatOpen}
@@ -489,12 +639,54 @@
 		font-size: 0.875rem;
 	}
 
+	.player-info {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
 	.name {
 		font-weight: 600;
 	}
+
 	.color-label {
 		font-size: 0.75rem;
 		opacity: 0.7;
+	}
+
+	.clock {
+		font-family: 'Courier New', monospace;
+		font-size: 1.25rem;
+		font-weight: bold;
+		padding: 0.25rem 0.75rem;
+		background: #1a1a1a;
+		border-radius: 6px;
+		color: #ccc;
+		min-width: 70px;
+		text-align: center;
+		transition: all 0.2s;
+	}
+
+	.clock.active {
+		background: #1f6f3f;
+		color: #fff;
+		box-shadow: 0 0 12px rgba(74, 222, 128, 0.5);
+	}
+
+	.clock.low {
+		background: #7a2a2a;
+		color: #fff;
+		animation: pulse 1s infinite;
+	}
+
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.6;
+		}
 	}
 
 	.board-layout {
@@ -502,6 +694,7 @@
 		gap: 4px;
 		width: 100%;
 	}
+
 	.rank-labels {
 		display: flex;
 		flex-direction: column;
@@ -513,6 +706,7 @@
 		color: #888;
 		user-select: none;
 	}
+
 	.board-column {
 		flex: 1;
 		display: flex;
@@ -520,16 +714,19 @@
 		gap: 4px;
 		min-width: 0;
 	}
+
 	.board-wrapper {
 		width: 100%;
 		aspect-ratio: 1;
 		border-radius: 6px;
 		overflow: hidden;
 	}
+
 	.chess-board {
 		width: 100%;
 		height: 100%;
 	}
+
 	.file-labels {
 		display: flex;
 		justify-content: space-around;
@@ -553,9 +750,11 @@
 		color: #4ade80;
 		font-weight: 600;
 	}
+
 	.status-wait {
 		color: #f0c040;
 	}
+
 	.status-end {
 		color: #ff6b6b;
 		font-weight: 600;
@@ -585,8 +784,21 @@
 	.action-btn:hover {
 		background: #3a3a3a;
 	}
+
 	.action-btn.danger {
 		color: #ff6b6b;
+	}
+
+	.chat-backdrop {
+		position: fixed;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		cursor: default;
+		z-index: 999;
 	}
 
 	.loading-state,
@@ -610,7 +822,7 @@
 	}
 
 	@keyframes spin {
-		to {
+		100% {
 			transform: rotate(360deg);
 		}
 	}
@@ -654,6 +866,7 @@
 		line-height: 1;
 		margin-bottom: 0.5rem;
 	}
+
 	.modal-title {
 		font-size: 1.75rem;
 		font-weight: bold;
@@ -661,11 +874,13 @@
 		color: #4ade80;
 		letter-spacing: 1px;
 	}
+
 	.modal-subtitle {
 		font-size: 0.875rem;
 		opacity: 0.7;
 		margin-bottom: 1.5rem;
 	}
+
 	.modal-actions {
 		display: flex;
 		gap: 0.5rem;
@@ -690,10 +905,12 @@
 	.modal-btn:hover {
 		background: #3a3a3a;
 	}
+
 	.modal-btn.primary {
 		background: #1f6f3f;
 		border-color: #4ade80;
 	}
+
 	.modal-btn.primary:hover {
 		background: #2a8f4f;
 	}
@@ -702,9 +919,11 @@
 		animation: blink 1.4s infinite;
 		animation-fill-mode: both;
 	}
+
 	.dots span:nth-child(2) {
 		animation-delay: 0.2s;
 	}
+
 	.dots span:nth-child(3) {
 		animation-delay: 0.4s;
 	}
@@ -718,5 +937,93 @@
 		40% {
 			opacity: 1;
 		}
+	}
+
+	/* Modal de confirmación (rendirse) */
+	.confirm-modal {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.75);
+		backdrop-filter: blur(4px);
+		-webkit-backdrop-filter: blur(4px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2500;
+		padding: 1rem;
+		animation: fadeIn 0.2s ease-out;
+	}
+
+	@keyframes fadeIn {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+
+	.confirm-content {
+		background: #2a2a2a;
+		border-radius: 16px;
+		padding: 1.75rem 1.5rem;
+		text-align: center;
+		max-width: 320px;
+		width: 100%;
+		border: 1px solid #3a3a3a;
+		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+	}
+
+	.confirm-emoji {
+		font-size: 3rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.confirm-title {
+		font-size: 1.25rem;
+		font-weight: bold;
+		margin: 0 0 0.5rem;
+		color: #fff;
+	}
+
+	.confirm-text {
+		font-size: 0.875rem;
+		opacity: 0.7;
+		margin-bottom: 1.5rem;
+	}
+
+	.confirm-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.confirm-btn {
+		flex: 1;
+		padding: 0.75rem 1rem;
+		border-radius: 10px;
+		font-size: 0.875rem;
+		font-weight: 600;
+		cursor: pointer;
+		font-family: inherit;
+		border: 1px solid transparent;
+	}
+
+	.confirm-btn.cancel {
+		background: #3a3a3a;
+		color: #fff;
+	}
+
+	.confirm-btn.cancel:hover {
+		background: #4a4a4a;
+	}
+
+	.confirm-btn.danger {
+		background: #7a2a2a;
+		color: #fff;
+		border-color: #a03a3a;
+	}
+
+	.confirm-btn.danger:hover {
+		background: #a03a3a;
 	}
 </style>

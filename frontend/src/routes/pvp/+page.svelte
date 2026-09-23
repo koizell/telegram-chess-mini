@@ -95,7 +95,13 @@
   }
 
   function goToGame(gameId: string) {
-    window.location.href = `${base}/pvp/${gameId}`;
+    // Preservar el parámetro dev_user si existe
+    let query = '';
+    if (typeof window !== 'undefined') {
+      const devUser = new URLSearchParams(window.location.search).get('dev_user');
+      if (devUser) query = `?dev_user=${devUser}`;
+    }
+    window.location.href = `${base}/pvp/${gameId}${query}`;
   }
 
   function formatTime(seconds: number): string {

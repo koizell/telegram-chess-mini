@@ -6,6 +6,7 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime, timezone
 from app.db.client import pb
 from app.modules.game.engine import ChessGame
 
@@ -43,23 +44,31 @@ class FinishGameRequest(BaseModel):
 
 
 # ============================================
+# HELPERS: Fechas de PocketBase
+# ============================================
+def _parse_pb_date(iso_str: str):
+    if not iso_str:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def _format_pb_date(dt):
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.000Z")
+
+
+# ============================================
 # HELPERS: ELO
 # ============================================
 def _calculate_elo(player_elo: int, opponent_elo: int, score: float, k: int = 32) -> int:
-    """
-    Calcula el nuevo ELO de un jugador.
-    score: 1.0 victoria, 0.5 tablas, 0.0 derrota
-    """
     expected = 1 / (1 + 10 ** ((opponent_elo - player_elo) / 400))
     new_elo = player_elo + k * (score - expected)
     return round(new_elo)
 
 
 def _update_elo_after_pvp(game_data: dict, result: str):
-    """
-    Actualiza el ELO de ambos jugadores tras una partida PvP.
-    result: 'white_wins', 'black_wins', 'draw'
-    """
     white_id = game_data.get("white_player")
     black_id = game_data.get("black_player")
 
@@ -67,7 +76,6 @@ def _update_elo_after_pvp(game_data: dict, result: str):
         logger.warning("No se puede actualizar ELO: jugadores faltantes")
         return
 
-    # Obtener ambos jugadores
     url = f"{pb.url}/api/collections/users/records"
     white_res = requests.get(f"{url}/{white_id}", headers=pb._headers())
     black_res = requests.get(f"{url}/{black_id}", headers=pb._headers())
@@ -82,7 +90,6 @@ def _update_elo_after_pvp(game_data: dict, result: str):
     white_elo = white.get("elo", 1200)
     black_elo = black.get("elo", 1200)
 
-    # Determinar score
     if result == "white_wins":
         white_score, black_score = 1.0, 0.0
         white_wins = white.get("wins", 0) + 1
@@ -95,7 +102,7 @@ def _update_elo_after_pvp(game_data: dict, result: str):
         black_wins = black.get("wins", 0) + 1
         white_draws = white.get("draws", 0)
         black_draws = black.get("draws", 0)
-    else:  # draw
+    else:
         white_score, black_score = 0.5, 0.5
         white_draws = white.get("draws", 0) + 1
         black_draws = black.get("draws", 0) + 1
@@ -107,25 +114,50 @@ def _update_elo_after_pvp(game_data: dict, result: str):
     new_white_elo = _calculate_elo(white_elo, black_elo, white_score)
     new_black_elo = _calculate_elo(black_elo, white_elo, black_score)
 
-    # Actualizar blanco
-    white_update = {
+    requests.patch(f"{url}/{white_id}", json={
         "elo": new_white_elo,
         "wins": white_wins,
         "losses": white_losses,
         "draws": white_draws,
-    }
-    requests.patch(f"{url}/{white_id}", json=white_update, headers=pb._headers())
+    }, headers=pb._headers())
 
-    # Actualizar negro
-    black_update = {
+    requests.patch(f"{url}/{black_id}", json={
         "elo": new_black_elo,
         "wins": black_wins,
         "losses": black_losses,
         "draws": black_draws,
-    }
-    requests.patch(f"{url}/{black_id}", json=black_update, headers=pb._headers())
+    }, headers=pb._headers())
 
     logger.info(f"✅ ELO actualizado: {white_elo}→{new_white_elo} (W), {black_elo}→{new_black_elo} (B)")
+
+
+# ============================================
+# HELPERS: Respuesta de partida
+# ============================================
+def _build_game_response(game, white, black, current_turn=None, timeout=False):
+    """Construye la respuesta JSON estandarizada de una partida."""
+    return {
+        "id": game.get("id"),
+        "fen": game.get("fen"),
+        "status": game.get("status"),
+        "game_type": game.get("game_type"),
+        "white_player_id": game.get("white_player"),
+        "black_player_id": game.get("black_player"),
+        "white_player_name": white.get("display_name"),
+        "black_player_name": black.get("display_name"),
+        "white_player_telegram_id": white.get("telegram_id"),
+        "black_player_telegram_id": black.get("telegram_id"),
+        "winner": game.get("winner"),
+        "result": game.get("result"),
+        "pgn": game.get("pgn"),
+        "time_white_ms": game.get("time_white_ms", 0) or 0,
+        "time_black_ms": game.get("time_black_ms", 0) or 0,
+        "time_control_ms": game.get("time_control_ms", 0) or 0,
+        "last_move_at": game.get("last_move_at"),
+        "current_turn": current_turn,
+        "server_now": datetime.now(timezone.utc).isoformat(),
+        "timeout": timeout,
+    }
 
 
 # ============================================
@@ -133,7 +165,6 @@ def _update_elo_after_pvp(game_data: dict, result: str):
 # ============================================
 @router.post("")
 async def create_game(req: CreateGameRequest):
-    """Crea una partida nueva."""
     try:
         pb.authenticate()
 
@@ -167,7 +198,7 @@ async def create_game(req: CreateGameRequest):
 # ============================================
 @router.get("/{game_id}")
 async def get_game(game_id: str):
-    """Devuelve el estado de una partida por ID."""
+    """Devuelve el estado de una partida. Detecta timeouts."""
     try:
         pb.authenticate()
         url = f"{pb.url}/api/collections/games/records/{game_id}"
@@ -181,21 +212,65 @@ async def get_game(game_id: str):
         white = expand.get("white_player", {})
         black = expand.get("black_player", {})
 
-        return {
-            "id": game.get("id"),
-            "fen": game.get("fen"),
-            "status": game.get("status"),
-            "game_type": game.get("game_type"),
-            "white_player_id": game.get("white_player"),
-            "black_player_id": game.get("black_player"),
-            "white_player_name": white.get("display_name"),
-            "black_player_name": black.get("display_name"),
-            "white_player_telegram_id": white.get("telegram_id"),
-            "black_player_telegram_id": black.get("telegram_id"),
-            "winner": game.get("winner"),
-            "result": game.get("result"),
-            "pgn": game.get("pgn"),
-        }
+        game_type = game.get("game_type")
+        status = game.get("status")
+
+        time_white = game.get("time_white_ms", 0) or 0
+        time_black = game.get("time_black_ms", 0) or 0
+        time_control = game.get("time_control_ms", 0) or 0
+        last_move_at_str = game.get("last_move_at")
+
+        current_turn = None
+
+        # Detección de timeout (solo PvP activas)
+        if game_type == "pvp" and status == "active" and time_control > 0:
+            board = ChessGame(game.get("fen", ""))
+            current_turn = board.turn
+
+            last_move_at = _parse_pb_date(last_move_at_str)
+            now = datetime.now(timezone.utc)
+            elapsed_ms = max(0, int((now - last_move_at).total_seconds() * 1000))
+
+            live_white = max(0, time_white - elapsed_ms) if current_turn == "white" else time_white
+            live_black = max(0, time_black - elapsed_ms) if current_turn == "black" else time_black
+
+            # Timeout de blancas
+            if current_turn == "white" and live_white == 0:
+                update = {
+                    "status": "finished",
+                    "result": "black_wins",
+                    "winner": game.get("black_player"),
+                    "time_white_ms": 0,
+                    "time_black_ms": time_black,
+                    "pgn": (game.get("pgn") or "") + " {Blancas perdieron por tiempo}",
+                }
+                requests.patch(url, json=update, headers=pb._headers())
+                _update_elo_after_pvp(game, "black_wins")
+
+                # Recargar para devolver estado actualizado
+                response = requests.get(url, headers=pb._headers(), params=params)
+                game = response.json()
+                return _build_game_response(game, white, black, current_turn=None, timeout=True)
+
+            # Timeout de negras
+            if current_turn == "black" and live_black == 0:
+                update = {
+                    "status": "finished",
+                    "result": "white_wins",
+                    "winner": game.get("white_player"),
+                    "time_white_ms": time_white,
+                    "time_black_ms": 0,
+                    "pgn": (game.get("pgn") or "") + " {Negras perdieron por tiempo}",
+                }
+                requests.patch(url, json=update, headers=pb._headers())
+                _update_elo_after_pvp(game, "white_wins")
+
+                response = requests.get(url, headers=pb._headers(), params=params)
+                game = response.json()
+                return _build_game_response(game, white, black, current_turn=None, timeout=True)
+
+        return _build_game_response(game, white, black, current_turn=current_turn, timeout=False)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -204,15 +279,14 @@ async def get_game(game_id: str):
 
 
 # ============================================
-# ENDPOINT: Movimiento (PvP y vs bot)
+# ENDPOINT: Movimiento
 # ============================================
 @router.post("/{game_id}/move")
 async def make_move(game_id: str, move: MoveRequest):
-    """Aplica un movimiento. Valida turno y jugador en PvP."""
+    """Aplica un movimiento con gestión de reloj."""
     try:
         pb.authenticate()
 
-        # 1. Obtener la partida
         url = f"{pb.url}/api/collections/games/records/{game_id}"
         response = requests.get(url, headers=pb._headers())
         if response.status_code != 200:
@@ -224,7 +298,10 @@ async def make_move(game_id: str, move: MoveRequest):
         if game_data.get("status") != "active":
             raise HTTPException(status_code=400, detail="La partida no está activa")
 
-        # 2. En PvP, verificar que el jugador sea uno de los dos y que sea su turno
+        board_game = ChessGame(game_data.get("fen"))
+        turn = board_game.turn
+
+        # ── Validación de turno (PvP) ──
         if game_type == "pvp":
             player = pb.get_user_by_telegram_id(move.telegram_id)
             if not player:
@@ -237,17 +314,61 @@ async def make_move(game_id: str, move: MoveRequest):
             if player_id not in (white_id, black_id):
                 raise HTTPException(status_code=403, detail="No eres jugador de esta partida")
 
-            # Determinar si es su turno según el FEN
-            board_game = ChessGame(game_data.get("fen"))
-            turn = board_game.turn  # "white" o "black"
-
             is_white = player_id == white_id
             if (is_white and turn != "white") or (not is_white and turn != "black"):
                 raise HTTPException(status_code=400, detail="No es tu turno")
-        else:
-            board_game = ChessGame(game_data.get("fen"))
 
-        # 3. Aplicar el movimiento
+        # ── Gestión del reloj (PvP) ──
+        update_data = {}
+        if game_type == "pvp":
+            time_white = game_data.get("time_white_ms", 0) or 0
+            time_black = game_data.get("time_black_ms", 0) or 0
+            time_control = game_data.get("time_control_ms", 0) or 0
+            last_move_at = _parse_pb_date(game_data.get("last_move_at"))
+
+            if time_white == 0 and time_black == 0 and time_control == 0:
+                time_white = time_black = time_control = 300000
+
+            now = datetime.now(timezone.utc)
+            elapsed_ms = max(0, int((now - last_move_at).total_seconds() * 1000))
+
+            # Obtener incremento (Fischer)
+            increment_ms = game_data.get("increment_ms", 0) or 0
+
+            if turn == "white":
+                time_white = max(0, time_white - elapsed_ms) + increment_ms
+            else:
+                time_black = max(0, time_black - elapsed_ms) + increment_ms
+
+            # Timeout del que mueve
+            if (turn == "white" and time_white == 0) or (turn == "black" and time_black == 0):
+                winner_id = game_data.get("black_player") if turn == "white" else game_data.get("white_player")
+                result = "black_wins" if turn == "white" else "white_wins"
+
+                timeout_update = {
+                    "status": "finished",
+                    "result": result,
+                    "winner": winner_id,
+                    "time_white_ms": time_white,
+                    "time_black_ms": time_black,
+                    "pgn": (game_data.get("pgn") or "") + " {Timeout}",
+                }
+                requests.patch(url, json=timeout_update, headers=pb._headers())
+                _update_elo_after_pvp(game_data, result)
+
+                return {
+                    "status": "ok",
+                    "fen": board_game.fen,
+                    "is_game_over": True,
+                    "result": result,
+                    "status_message": "⏰ Tiempo agotado",
+                }
+
+            update_data["time_white_ms"] = time_white
+            update_data["time_black_ms"] = time_black
+            update_data["last_move_at"] = _format_pb_date(now)
+
+        # ── Aplicar el movimiento ──
         if not board_game.make_move(move.from_square, move.to_square, move.promotion):
             legal = board_game.get_legal_moves_from(move.from_square)
             raise HTTPException(
@@ -255,11 +376,8 @@ async def make_move(game_id: str, move: MoveRequest):
                 detail=f"Movimiento inválido. Legales desde {move.from_square}: {legal}"
             )
 
-        # 4. Construir actualización
-        update_data = {
-            "fen": board_game.fen,
-            "pgn": (game_data.get("pgn") or "") + " " + f"{move.from_square}{move.to_square}",
-        }
+        update_data["fen"] = board_game.fen
+        update_data["pgn"] = (game_data.get("pgn") or "") + " " + f"{move.from_square}{move.to_square}"
 
         game_over = board_game.is_game_over
 
@@ -268,18 +386,15 @@ async def make_move(game_id: str, move: MoveRequest):
             update_data["status"] = "finished"
             update_data["result"] = result
 
-            # Determinar winner
             if result == "white_wins":
                 update_data["winner"] = game_data.get("white_player")
             elif result == "black_wins":
                 update_data["winner"] = game_data.get("black_player")
 
-        # 5. Guardar en PocketBase
         update_response = requests.patch(url, json=update_data, headers=pb._headers())
         if update_response.status_code != 200:
             raise HTTPException(status_code=500, detail="Error guardando movimiento")
 
-        # 6. Si terminó y es PvP, actualizar ELO
         if game_over and game_type == "pvp":
             result = board_game.get_result()
             if result:
@@ -300,11 +415,10 @@ async def make_move(game_id: str, move: MoveRequest):
 
 
 # ============================================
-# ENDPOINT: Finalizar partida (para partidas vs bot)
+# ENDPOINT: Finalizar partida (vs bot o abandono)
 # ============================================
 @router.post("/{game_id}/finish")
 async def finish_game(game_id: str, req: FinishGameRequest):
-    """Marca la partida como finalizada. Solo actualiza ELO si es PvP."""
     try:
         pb.authenticate()
 
@@ -313,7 +427,6 @@ async def finish_game(game_id: str, req: FinishGameRequest):
 
         is_aborted = req.result == "aborted"
 
-        # Obtener la partida para saber si es PvP
         url = f"{pb.url}/api/collections/games/records/{game_id}"
         game_res = requests.get(url, headers=pb._headers())
         if game_res.status_code != 200:
@@ -338,7 +451,6 @@ async def finish_game(game_id: str, req: FinishGameRequest):
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Error guardando: {response.text}")
 
-        # Actualizar ELO solo si es PvP y no es aborted
         if not is_aborted and req.game_type == "pvp":
             _update_elo_after_pvp(game_data, req.result)
 
@@ -355,7 +467,6 @@ async def finish_game(game_id: str, req: FinishGameRequest):
 # ============================================
 @router.get("/{game_id}/messages")
 async def get_messages(game_id: str, limit: int = 50):
-    """Lista los mensajes de una partida."""
     try:
         pb.authenticate()
         url = f"{pb.url}/api/collections/messages/records"
@@ -395,7 +506,6 @@ async def get_messages(game_id: str, limit: int = 50):
 # ============================================
 @router.post("/{game_id}/messages")
 async def send_message(game_id: str, msg: MessageRequest):
-    """Guarda un mensaje en la partida."""
     try:
         pb.authenticate()
 
@@ -430,7 +540,6 @@ async def send_message(game_id: str, msg: MessageRequest):
 # ============================================
 @router.get("/history/{telegram_id}")
 async def get_history(telegram_id: int, limit: int = 20):
-    """Devuelve las últimas partidas de un usuario."""
     try:
         pb.authenticate()
 

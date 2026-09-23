@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.client import pb
-from app.api.routes import users, ranking, games, matchmaking
+from app.api.routes import users, ranking, games, matchmaking, stream
 
 # ============================================
 # CONFIGURACIÓN DE LOGGING
@@ -103,3 +103,4 @@ app.include_router(users.router)
 app.include_router(ranking.router)
 app.include_router(games.router)
 app.include_router(matchmaking.router)
+app.include_router(stream.router)   

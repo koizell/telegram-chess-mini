@@ -90,7 +90,7 @@
 
   onMount(() => {
     loadMessages();
-    pollInterval = setInterval(loadMessages, 3000);
+    pollInterval = setInterval(loadMessages, 5000);
   });
 
   onDestroy(() => {
@@ -100,6 +100,13 @@
   $: if (isOpen) {
     loadMessages();
     scrollToBottom();
+  }
+
+    // ═══════════════════════════════════════════════════════
+  // API PÚBLICA: permite al padre forzar una recarga
+  // ═══════════════════════════════════════════════════════
+  export function refresh() {
+    loadMessages();
   }
 </script>
 

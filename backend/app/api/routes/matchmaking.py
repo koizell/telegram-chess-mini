@@ -62,15 +62,27 @@ def _find_opponent(player_id: str, elo: int, exclude_telegram_id: int):
     return items[0] if items else None
 
 
+# Tiempo inicial del reloj: 5 minutos
+INITIAL_TIME_MS = 600000   # 10 minutos
+INCREMENT_MS = 10000       # +10 segundos por movimiento (Fischer)
+
+
 def _create_pvp_game(player_a_id: str, player_b_id: str):
-    """Crea una partida PvP."""
+    """Crea una partida PvP con reloj inicial de 5 minutos."""
     url = f"{pb.url}/api/collections/games/records"
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.000Z")
+
     data = {
         "white_player": player_a_id,
         "black_player": player_b_id,
         "game_type": "pvp",
         "status": "active",
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "time_white_ms": INITIAL_TIME_MS,
+        "time_black_ms": INITIAL_TIME_MS,
+        "time_control_ms": INITIAL_TIME_MS,
+        "increment_ms": INCREMENT_MS,
+        "last_move_at": now_iso,
     }
     response = requests.post(url, json=data, headers=pb._headers())
     if response.status_code != 200:
